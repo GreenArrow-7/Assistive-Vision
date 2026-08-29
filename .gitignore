@@ -16,3 +16,4 @@ datasets/
 # (gitignore has no trailing comments — # only starts one at line start)
 runs/
 cloudflared.exe
+datasets/annotate_upload/

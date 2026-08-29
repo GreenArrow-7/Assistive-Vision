@@ -131,7 +131,8 @@ same-origin. Serving the frontend from a different host is not supported.
 ## 8. Known limitations (honest notes for the viva)
 
 * Symbol recognition is keyword/class-mapped, not a trained icon classifier —
-  a custom YOLO symbol dataset is the documented upgrade path.
+  a custom YOLO symbol dataset is the documented upgrade path
+  (`docs/ANNOTATION_BRIEF.md`; the upload bundle is built and waiting).
 * Proximity is monocular (bbox-area heuristic), not metric depth.
 * Outdoor turn-by-turn is delegated to Google Maps rather than re-implemented.
 * Live-assist latency is CPU-bound (~0.5–2 s/frame on a laptop CPU).

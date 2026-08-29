@@ -29,6 +29,11 @@ same videos, order and fps regenerates the same file names, so the tracked
 labels re-attach (images are gitignored; labels are tracked).
 
 ## Step 2 — Annotate in Roboflow (free tier)
+
+**The bundle is already built: `datasets/annotate_upload.zip`** (986 image+
+label pairs, 2,760 boxes, class list in canonical `AV_ALL_CLASSES` order).
+See `docs/ANNOTATION_BRIEF.md` for what to draw, in what order, and how much
+is enough. The steps below are the mechanics.
 1. roboflow.com → Create Project → Object Detection.
 2. Upload `images/` **and** `labels/` together (it imports the pre-labels).
 3. Set the class list to **exactly these 14 names, in this order** — the
