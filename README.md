@@ -153,6 +153,16 @@ Open the printed https URL on your phone. Laptop must stay on.
 ### Path B — Permanent live URL: Hugging Face Spaces (free CPU)
 This repo includes a Dockerfile ready for HF Spaces.
 
+**Verified 2026-08-29** by an actual `docker build` + run, not by inspection:
+image builds clean (793 MB of layers, 3.24 GB on disk), `/health` returns 200
+with `ready: true`, `/analyze` answers real frames end-to-end (detection, OCR,
+step distance, keyword search), the web app is served, and a 9 MB upload is
+rejected with 413. In-container latency 3.5–6.2 s/frame on a laptop CPU.
+
+`/health` reports `"object_schema": "coco"` in a stock image: `.dockerignore`
+excludes `*.pt`, so the COCO fallback ships and the custom schema appears only
+once you place `models/av_obstacle.pt` before building.
+
 1. Create account at https://huggingface.co → New Space → SDK: **Docker** → CPU basic (free).
 2. Push this repo to the Space:
    ```bash
