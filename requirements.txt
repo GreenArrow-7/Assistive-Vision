@@ -1,0 +1,11 @@
+# Pinned to the set this project is tested against. Unpinned ">=" meant a
+# rebuild months later resolved different majors (ultralytics especially) and
+# produced an image that no longer matched the one that was validated.
+# Test-only deps live in requirements-dev.txt so they stay out of the image.
+fastapi==0.139.0
+uvicorn[standard]==0.51.0
+python-multipart==0.0.32
+opencv-python-headless==5.0.0.93
+numpy==2.4.4
+ultralytics==8.4.95         # YOLOv8 (objects/obstacles) + OBB support
+easyocr==1.7.2              # text detection (CRAFT) + recognition

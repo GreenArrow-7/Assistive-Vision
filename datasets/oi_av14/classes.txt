@@ -1,0 +1,14 @@
+person
+chair
+table
+door
+stairs_up
+dustbin
+signboard
+stairs_down
+pole
+sign_washroom
+sign_exit
+sign_lift
+sign_reception
+sign_wheelchair

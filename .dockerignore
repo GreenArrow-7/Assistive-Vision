@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.git/
+.pytest_cache/
+# multi-GB build-context bloat: models are baked by download_models.py instead
+videos/
+datasets/
+runs/
+*.mp4
+*.MP4
+*.pt
+cloudflared.exe

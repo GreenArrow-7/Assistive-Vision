@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest==9.1.1
+httpx==0.28.1               # fastapi TestClient (tests/test_api_limits.py)
+scipy==1.17.1               # scripts/evaluate.py + converter tests
+pillow==12.2.0

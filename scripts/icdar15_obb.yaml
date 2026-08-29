@@ -1,0 +1,5 @@
+path: ../datasets/icdar15_obb
+train: train/images
+val: val/images
+names:
+  0: text

@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.pt
+!models/.gitkeep
+.DS_Store
+.pytest_cache/
+videos/
+# Images and splits stay out (regenerable bulk), but the LABEL files are
+# force-added: 4.7k .txt files are ~460 KB of annotation output that no
+# re-download reproduces -- the 219 adjudicated review decisions are baked
+# into them. Tracked files ignore this rule, so they keep updating normally.
+# See git ls-files datasets/
+datasets/
+# scripts/evaluate.py + ultralytics output: regenerate, never commit
+# (gitignore has no trailing comments — # only starts one at line start)
+runs/
+cloudflared.exe
