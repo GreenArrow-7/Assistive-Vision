@@ -1,4 +1,4 @@
-"""Train a PRELIMINARY AV-7 detector on this CPU box, overnight.
+"""Train a PRELIMINARY AV-6 detector on this CPU box, overnight.
 
 This is NOT the paper model. On an i7-6600U the planned run (yolov8s, 832 px,
 120 epochs) extrapolates to ~19 days; scripts/train_av14_colab.py on a free T4
@@ -102,7 +102,7 @@ def main(a):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", type=Path, default=Path("datasets/av7_split"))
+    ap.add_argument("--data", type=Path, default=Path("datasets/av6_split"))
     ap.add_argument("--model", default="yolov8n.pt")
     ap.add_argument("--epochs", type=int, default=12)
     ap.add_argument("--imgsz", type=int, default=640)
@@ -110,5 +110,5 @@ if __name__ == "__main__":
     ap.add_argument("--workers", type=int, default=0)   # 2 cores: workers hurt
     ap.add_argument("--patience", type=int, default=0)
     ap.add_argument("--project", type=Path, default=Path("runs/local"))
-    ap.add_argument("--name", default="av7_baseline")
+    ap.add_argument("--name", default="av6_baseline")
     main(ap.parse_args())

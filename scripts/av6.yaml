@@ -1,0 +1,12 @@
+path: ../datasets/av6
+train: train/images
+val: valid/images
+test: test/images
+
+names:
+  0: person
+  1: chair
+  2: table
+  3: door
+  4: stairs_up
+  5: dustbin

@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import merge_review_queue as mrq  # noqa: E402
-from server.classes_av import AV_CLASSES  # noqa: E402
+from server.classes_av import AV_ALL_CLASSES  # noqa: E402
 
 COLS = ["image", "coco_class", "suspected_av14", "cx", "cy", "w", "h", "decision"]
 
@@ -50,7 +50,11 @@ def test_decided_box_is_written_with_correct_class_index(tmp_path):
     mrq.merge(seed, out, q)
 
     line = (out / "labels" / "a.txt").read_text().strip()
-    assert line.split()[0] == str(AV_CLASSES.index("signboard"))
+    # AV_ALL_CLASSES, not AV_CLASSES: the review queue speaks the ANNOTATION
+    # vocabulary, so a verdict naming a class that is not currently trained
+    # (signboard, stairs_down) still has to land on the right index. Asserting
+    # against the trained list only passed while the two happened to agree.
+    assert line.split()[0] == str(AV_ALL_CLASSES.index("signboard"))
     assert [float(x) for x in line.split()[1:]] == [0.5, 0.5, 0.2, 0.2]
 
 

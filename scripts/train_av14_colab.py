@@ -1,21 +1,21 @@
-"""One Colab session -> models/av_obstacle.pt (AV-7 obstacle detector).
+"""One Colab session -> models/av_obstacle.pt (AV-6 obstacle detector).
 
 Local prep (this machine, no GPU needed):
   1. python scripts/merge_review_queue.py --out datasets/av14_merged
      python scripts/reindex_labels.py --src datasets/av14_merged \
-         --out datasets/av7_merged
+         --out datasets/av6_merged
   2. python scripts/pull_open_datasets.py --per-class 400 --out datasets/oi_av14
-     python scripts/reindex_labels.py --src datasets/oi_av14 --out datasets/oi_av7
-  3. python scripts/prepare_split.py --src datasets/av7_merged \
-         --out datasets/av7_split --schema av7 --extra datasets/oi_av7
-  4. zip datasets/av7_split -> av7_split.zip -> upload to Google Drive
+     python scripts/reindex_labels.py --src datasets/oi_av14 --out datasets/oi_av6
+  3. python scripts/prepare_split.py --src datasets/av6_merged \
+         --out datasets/av6_split --schema av6 --extra datasets/oi_av6
+  4. zip datasets/av6_split -> av6_split.zip -> upload to Google Drive
      (prepare_split.py already wrote it; verified to pass the gate below)
 
 Then paste this file into a Colab cell (Runtime > T4 GPU) and run.
 Cells are marked `# %%` so it also runs top-to-bottom as a script.
 """
 # %% ---------------------------------------------------------------- config
-DATASET_ZIP = "/content/drive/MyDrive/av7_split.zip"
+DATASET_ZIP = "/content/drive/MyDrive/av6_split.zip"
 EPOCHS = 120
 IMGSZ = 832        # signs are small objects; 640 loses them at distance
 BATCH = 12         # T4-safe at 832
@@ -34,7 +34,7 @@ if IN_COLAB:
     from google.colab import drive
     drive.mount("/content/drive")
 
-work = Path("/content/av7" if IN_COLAB else "datasets/av7_colab")
+work = Path("/content/av6" if IN_COLAB else "datasets/av6_colab")
 if not (work / "data.yaml").exists():
     work.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(DATASET_ZIP) as z:
@@ -63,7 +63,7 @@ print(f"schema: {len(AV_NAMES)} classes -> {AV_NAMES}")
 
 # %% ------------------------------------------------------- coverage gate
 # Weights trained here carry the split's class names, so server/detector.py
-# identifies them as "av7" and applies the full AV_HAZARDS set -- including
+# identifies them as "av6" and applies the full AV_HAZARDS set -- including
 # stairs_down, the sole AV_CRITICAL class. A model that cannot emit a class it
 # claims to speak is the exact silent-capability gap detect_schema exists to
 # catch, arriving from the dataset side. Counting the boxes takes a second;
@@ -110,7 +110,7 @@ if _problems:
             "Annotate the gaps, or set ALLOW_SPARSE = True to train anyway.\n"
             "A partial model is a research artifact ONLY: it must not be\n"
             "installed at models/av_obstacle.pt, where it would report\n"
-            "object_schema 'av7' while silently never raising those hazards.")
+            "object_schema 'av6' while silently never raising those hazards.")
     print("\nWARNING -- training a PARTIAL model:\n" + _msg)
 
 # %% ---------------------------------------------------------------- train
@@ -118,7 +118,7 @@ from ultralytics import YOLO  # noqa: E402
 
 model = YOLO(MODEL)
 model.train(data=str(work / "data.yaml"), epochs=EPOCHS, imgsz=IMGSZ,
-            batch=BATCH, patience=30, name="av7",
+            batch=BATCH, patience=30, name="av6",
             degrees=8, hsv_v=0.5, fliplr=0.5, mosaic=1.0, close_mosaic=15)
 
 best = Path(model.trainer.save_dir) / "weights" / "best.pt"
@@ -129,7 +129,7 @@ metrics = YOLO(str(best)).val(data=str(work / "data.yaml"), imgsz=IMGSZ)
 print(f"mAP50 {metrics.box.map50:.3f} | mAP50-95 {metrics.box.map:.3f}")
 
 # %% ------------------------------------------------------ verify + install
-# same check the server runs at startup: the weights must speak AV-14 by NAME
+# same check the server runs at startup: the weights must speak the schema by NAME
 m = YOLO(str(best))
 names = set(str(v) for v in m.names.values())
 assert names == set(AV_NAMES), (
@@ -139,7 +139,7 @@ assert names == set(AV_NAMES), (
 # partial model dangerous, because they are what detect_schema trusts.
 if COMPLETE:
     print("OK — rename to av_obstacle.pt, place at models/av_obstacle.pt,")
-    print("restart the server; /health should report object_schema: av7")
+    print("restart the server; /health should report object_schema: av6")
 else:
     print("DO NOT DEPLOY — this model was trained with ALLOW_SPARSE.")
     print("Its names match the schema, so the server would trust it with the")

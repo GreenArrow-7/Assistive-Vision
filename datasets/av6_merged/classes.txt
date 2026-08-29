@@ -1,0 +1,6 @@
+person
+chair
+table
+door
+stairs_up
+dustbin

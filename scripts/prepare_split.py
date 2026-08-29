@@ -11,14 +11,14 @@ class names are COCO, and a COCO-class model at models/av_obstacle.pt is the
 documented safety failure server/detector.detect_schema exists to catch.
 
 Usage:
-  python scripts/prepare_split.py --src datasets/av14_seed --out datasets/av14_seed_split --schema av7
+  python scripts/prepare_split.py --src datasets/av14_seed --out datasets/av14_seed_split --schema av6
   # COCO baseline set (regenerates what runs/eval/coco_baseline.* was
   # measured on). Kept out of the defaults on purpose: its data.yaml
   # declares COCO names, so training on it yields a COCO model -- exactly
   # the file that must never land at models/av_obstacle.pt.
   python scripts/prepare_split.py --src datasets/av_raw --out datasets/av_finetune
   python scripts/prepare_split.py --src datasets/av14 --out datasets/av14_split \
-      --schema av7
+      --schema av6
 """
 import argparse
 import os
@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from server.classes_av import AV_CLASSES              # noqa: E402
 # same schema names the server branches on, so --schema and detector.py speak
 # one vocabulary
-from server.detector import SCHEMA_AV7, SCHEMA_COCO  # noqa: E402
+from server.detector import SCHEMA_AV, SCHEMA_COCO  # noqa: E402
 
 
 def video_of(stem: str) -> str:
@@ -63,7 +63,7 @@ def resolve_schema(requested: str, labels) -> str:
     0-13) is indistinguishable from an AV-14 set. Nothing in a YOLO .txt file
     records the vocabulary.
 
-    So we never guess 'av7'. Guessing it is precisely the dangerous guess: it
+    So we never guess 'av6'. Guessing it is precisely the dangerous guess: it
     stamps AV-14 names onto COCO-trained weights, and server/detector.py
     identifies models by their class NAMES, so the result loads as the AV-14
     fine-tune and silently swaps in AV_HAZARDS — which contains no vehicles.
@@ -72,14 +72,14 @@ def resolve_schema(requested: str, labels) -> str:
     assertion against the labels.
     """
     hi = max_class_index(labels)
-    if requested == SCHEMA_AV7:
+    if requested == SCHEMA_AV:
         if hi >= len(AV_CLASSES):
             raise SystemExit(
-                f"--schema av7 but labels contain class index {hi}; the AV schema "
+                f"--schema av6 but labels contain class index {hi}; the AV schema "
                 f"defines only 0-{len(AV_CLASSES) - 1}. These look like uncorrected "
                 "COCO pre-labels: remap them before splitting."
             )
-        return SCHEMA_AV7
+        return SCHEMA_AV
     if requested == SCHEMA_COCO:
         return SCHEMA_COCO
     if hi >= len(AV_CLASSES):
@@ -87,7 +87,7 @@ def resolve_schema(requested: str, labels) -> str:
     raise SystemExit(
         f"cannot infer label schema: highest class index is {hi}, which fits "
         f"both AV (0-{len(AV_CLASSES) - 1}) and a COCO subset. Pass "
-        "--schema av7 or --schema coco; guessing would put the wrong names "
+        "--schema av6 or --schema coco; guessing would put the wrong names "
         "in data.yaml."
     )
 
@@ -255,12 +255,12 @@ def prepare(src: Path, out: Path, val_frac: float, schema: str = "auto",
         link_or_copy(lbl, out / split / "labels" / lbl.name)
         counts[split] += 1
 
-    # server/classes_av.AV_CLASSES is the single source of truth for AV-14.
-    # scripts/av14.yaml hand-duplicates the same list (it is uploaded to
+    # server/classes_av.AV_CLASSES is the single source of truth for the schema.
+    # scripts/av6.yaml hand-duplicates the same list (it is uploaded to
     # Roboflow/Colab standalone); tests/test_prepare_split.py fails if the two
     # ever drift. classes_av.data_yaml() is not reused here because it emits the
     # train/valid/test layout, and this script writes train/val only.
-    names = AV_CLASSES if schema == SCHEMA_AV7 else coco_names(src)
+    names = AV_CLASSES if schema == SCHEMA_AV else coco_names(src)
     yaml_path = out / "data.yaml"
     # No "path" key on purpose. It used to be str(out.resolve()), which baked
     # an absolute Windows path into the file -- unusable on Colab, which is
@@ -291,7 +291,7 @@ def prepare(src: Path, out: Path, val_frac: float, schema: str = "auto",
     # a model that PASSES detector.detect_schema (its names match AV_CLASSES) yet
     # structurally cannot emit the other 11. That is the same silent-capability
     # gap detect_schema exists to prevent, arriving from the dataset side.
-    if schema == SCHEMA_AV7:
+    if schema == SCHEMA_AV:
         # measured on what was WRITTEN, per split -- a class can be present
         # overall yet absent from train, which a combined count hides
         h_train = class_histogram((out / "train" / "labels").glob("*.txt"))
@@ -308,7 +308,7 @@ def prepare(src: Path, out: Path, val_frac: float, schema: str = "auto",
             problems.append(
                 f"{len(empty)} of {len(names)} AV classes have NO boxes: "
                 f"{', '.join(empty)}.\nTraining on this yields a model that "
-                "cannot detect them, while still identifying itself as AV-14.")
+                "cannot detect them, while still identifying itself as the trained schema.")
         if starved:
             problems.append(
                 f"{len(starved)} class(es) appear only in val, never in train: "
@@ -330,7 +330,7 @@ if __name__ == "__main__":
     ap.add_argument("--src", type=Path, default=Path("datasets/av14_seed"))
     ap.add_argument("--out", type=Path, default=Path("datasets/av14_seed_split"))
     ap.add_argument("--val-frac", type=float, default=0.2)
-    ap.add_argument("--schema", choices=["auto", SCHEMA_AV7, SCHEMA_COCO],
+    ap.add_argument("--schema", choices=["auto", SCHEMA_AV, SCHEMA_COCO],
                     default="auto", help="label vocabulary; auto only ever "
                     "concludes coco, see resolve_schema()")
     ap.add_argument("--allow-sparse", action="store_true",

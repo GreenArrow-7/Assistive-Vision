@@ -54,7 +54,7 @@ Dept. of CSE, ATMECE Mysuru · 2025–26
 ### Slide 6 — Objective → Deliverable Mapping
 | # | Objective | Deliverable | Status |
 |---|---|---|---|
-| 1 | Obstacle detection | `server/detector.py` + AV-7 schema | Pipeline ✅ · trained model ⏳ |
+| 1 | Obstacle detection | `server/detector.py` + AV-6 schema | Pipeline ✅ · trained model ⏳ |
 | 2 | Oriented text | `server/text_pipeline.py` (OBB → deskew → OCR) | ✅ |
 | 3 | Symbol recognition | `server/symbols.py` + 5 trained sign classes | Keyword path ✅ · trained path ⏳ |
 | 4 | Step distance | `server/spatial.py` two-estimator fusion | ✅ |
@@ -251,10 +251,10 @@ flowchart LR
     RM --> RQ[(review_queue.csv<br/>219 boxes)]
     RQ --> MG[merge_review_queue.py]
     MG --> MRG[(av14_merged<br/>2790 boxes)]
-    MRG --> RI[reindex_labels.py<br/>by NAME -> AV-7]
-    RI --> AV7[(av7_merged<br/>2786 boxes)]
+    MRG --> RI[reindex_labels.py<br/>by NAME -> AV-6]
+    RI --> AV6[(av6_merged<br/>2735 boxes)]
     OI[(Open Images V7<br/>1451 imgs · 2722 boxes)] --> RI
-    AV7 --> AN[Roboflow manual annotation<br/>stairs_down · pole · sign_*]
+    AV6 --> AN[Roboflow manual annotation<br/>stairs_down · pole · sign_* · signboard]
     AN --> SPL[prepare_split.py<br/>split BY VIDEO]
     SPL --> TR[Colab YOLOv8 training]
     TR --> MDL[(av_obstacle.pt)]
@@ -358,7 +358,7 @@ for each walkthrough video:
 |---|---|---|---|
 | 2 | car | 2 | **table** |
 | 5 | bus | 5 | **dustbin** |
-| 6 | train | 6 | **signboard** |
+| 6 | train | 6 | **signboard** (annotation vocab) |
 | 7 | truck | 7 | **stairs_down** |
 
 - Following the naïve import would have injected **9 phantom `stairs_down` boxes** — into the single most safety-critical class in the system, invisible to any accuracy metric.
@@ -382,7 +382,7 @@ for each walkthrough video:
 | `test_api_limits.py` | 18 | upload cap, rate limit, session bounds, /health |
 | `test_remap.py` | 18 | COCO→AV index rewrite, review queue |
 | `test_merge_review_queue.py` | 10 | adjudication merge |
-| `test_reindex_labels.py` | 10 | by-name reindex to AV-7 |
+| `test_reindex_labels.py` | 10 | by-name reindex onto the trained schema |
 | `test_review_crops.py` | 9 | crop review tool |
 | `test_obb_converters.py` | 7 | ICDAR/SynthText/COCO-Text → OBB, non-OBB refusal |
 | `test_evaluate.py` | 6 | percentiles, graceful degradation |
@@ -409,14 +409,14 @@ for each walkthrough video:
 - Test suite runtime: **~40 s**, 146 tests
 - Frame transport size: ~150 KB per frame at 960 px, JPEG q0.8
 - Live-assist cadence: 2.6 s per cycle
-- COCO baseline measured 2026-08-29 with `scripts/evaluate.py --weights yolov8n.pt --data datasets/av7_split/data.yaml --limit 200` on a laptop CPU (`runs/eval/coco_baseline.md`, val = 4 held-out phone videos + Open Images val): hazard-frame recall 0.236 at precision 0.875 — COCO yolov8n at the deployed 0.62 person gate misses most people in phone footage and cannot see doors, stairs or dustbins at all. Full-pipeline latency p50 3.9 s on an idle CPU, of which EasyOCR is 3.8 s and YOLOv8n 0.14 s.
-- **Preliminary AV-7 fine-tune trained 2026-08-29** (`scripts/train_local_baseline.py`: YOLOv8n, 640 px, 12 epochs, ~4 h on this CPU) → `models/av_obstacle_candidate.pt`, evaluated in `runs/eval/av7_local.md`. It is deliberately **not** installed as `models/av_obstacle.pt`; the final model is the Colab run (YOLOv8s, 832 px, 120 epochs).
+- COCO baseline measured 2026-08-29 with `scripts/evaluate.py --weights yolov8n.pt --data datasets/av6_split/data.yaml --limit 200` on a laptop CPU (`runs/eval/coco_baseline.md`, val = 4 held-out phone videos + Open Images val): hazard-frame recall 0.236 at precision 0.875 — COCO yolov8n at the deployed 0.62 person gate misses most people in phone footage and cannot see doors, stairs or dustbins at all. Full-pipeline latency p50 3.9 s on an idle CPU, of which EasyOCR is 3.8 s and YOLOv8n 0.14 s.
+- **Preliminary AV-6 fine-tune trained 2026-08-29** (`scripts/train_local_baseline.py`: YOLOv8n, 640 px, 12 epochs, ~4 h on this CPU) → `models/av_obstacle_candidate.pt`, evaluated in `runs/eval/av6_local.md`. It is deliberately **not** installed as `models/av_obstacle.pt`; the final model is the Colab run (YOLOv8s, 832 px, 120 epochs).
 
-**Measured on the AV-7 val split** (350 images / 691 boxes, 4 held-out phone videos + Open Images val):
+**Measured on the val split** (4 held-out phone videos + Open Images val). The preliminary column was measured on the 7-class schema, before `signboard` was retired (350 images / 691 boxes); the final column will be measured on AV-6 (344 images / 675 boxes):
 
-| Metric | COCO baseline | AV-7 preliminary (YOLOv8n, 12 ep) | AV-7 final (YOLOv8s, 120 ep) |
+| Metric | COCO baseline | Preliminary, 7-class (YOLOv8n, 12 ep) | AV-6 final (YOLOv8s, 120 ep) |
 |---|---|---|---|
-| mAP@50 | undefined (COCO vocabulary vs AV-7 labels) | **0.293** | `[PENDING]` |
+| mAP@50 | undefined (COCO vocabulary vs AV labels) | **0.293** (0.342 over the six retained classes) | `[PENDING]` |
 | mAP@50-95 | undefined | **0.177** | `[PENDING]` |
 | AP `stairs_down` | n/a (no class) | n/a until annotated | n/a until annotated |
 | AP `sign_*` (mean) | n/a (no class) | n/a until annotated | n/a until annotated |
@@ -427,7 +427,7 @@ for each walkthrough video:
 Per-class AP50 of the preliminary model, printed beside its support — the three
 classes COCO cannot express at all are where the fine-tune earns its place:
 
-| class | AP50 | val boxes | COCO recall → AV-7 recall (deployed thresholds) |
+| class | AP50 | val boxes | COCO recall → AV-6 recall (deployed thresholds) |
 |---|---|---|---|
 | `dustbin` | 0.766 | 30 | 0.000 → **0.909** |
 | `stairs_up` | 0.463 | 46 | 0.000 → **0.375** |
@@ -435,7 +435,7 @@ classes COCO cannot express at all are where the fine-tune earns its place:
 | `chair` | 0.289 | 28 | 0.471 → 0.294 |
 | `person` | 0.162 | 266 | 0.164 → 0.073 |
 | `table` | 0.011 | 17 | 0.250 → 0.000 |
-| `signboard` | 0.000 | 16 | 0.000 → 0.000 |
+| `signboard` | 0.000 | 16 | 0.000 → 0.000 — **retired from the schema after this run** |
 
   > Speaker note: report the regression, do not hide it. `person` drops because COCO carries millions of person boxes and we have 2,533 indoor ones; `table`/`signboard` have too few boxes to learn (the harness flags any class under 30 val boxes as noise). The frame-level hazard gain is real and is what the user experiences. The 120-epoch YOLOv8s run is expected to recover `person`; that model, not this one, is what gets deployed.
 
@@ -446,7 +446,7 @@ classes COCO cannot express at all are where the fine-tune earns its place:
 - **Operating-point metrics separate from mAP.** mAP is measured at conf≈0.001 and bypasses the deployed thresholds, so it reports model capacity, not system accuracy. Both are reported, labelled distinctly.
 
 ### Slide 28 — Current Dataset Status (Honest)
-Split as built on 2026-08-29 (`datasets/av7_split`, train / val boxes):
+Split as built on 2026-08-29 (`datasets/av6_split`, train / val boxes). `signboard` was retired from the trained schema the same day — 50 boxes, AP50 0.000:
 
 | Class | Train | Val | Source |
 |---|---|---|---|
@@ -456,10 +456,10 @@ Split as built on 2026-08-29 (`datasets/av7_split`, train / val boxes):
 | `stairs_up` | 534 | 46 | Open Images |
 | `chair` | 277 | 28 | auto-remapped + Open Images |
 | `table` | 75 | 17 | auto-remapped + Open Images |
-| `signboard` | 34 | 16 | adjudicated review queue |
+| `signboard` | — | — | RETIRED from the schema (50 boxes, AP50 0.000) |
 | `stairs_down`, `pole`, `sign_washroom`, `sign_exit`, `sign_lift`, `sign_reception`, `sign_wheelchair` | **0** | **0** | manual annotation pending |
 
-- 1,726 train / 350 val frames (4 self-recorded videos held out); all 219 review-queue boxes adjudicated.
+- 1,726 train / 344 val frames (4 self-recorded videos held out); all 219 review-queue boxes adjudicated.
 - The 7 empty classes have **no COCO or Open Images equivalent** — that is *why* the custom schema exists, and it is the irreducible manual step. `stairs_down` is the critical one: 474 Open Images stairs pictures are queued in `datasets/oi_av14/review_stairs.txt` for up/down re-tagging.
 
 ---
@@ -533,7 +533,7 @@ Split as built on 2026-08-29 (`datasets/av7_split`, train / val boxes):
 
 ### Slide 35 — Path to Submission
 1. Complete annotation and training → populate all result tables.
-2. Run the before/after comparison (COCO baseline vs AV-7 fine-tune) — the harness generates this in one command.
+2. Run the before/after comparison (COCO baseline vs AV-6 fine-tune) — the harness generates this in one command.
 3. Conduct the user study for the C3 claim (task-completion time vs unprioritized baseline).
 4. Internal review with guide → formatting to IEEE template → submission.
 

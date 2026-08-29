@@ -79,7 +79,8 @@ server/
   spatial.py        direction (frame thirds) + proximity (bbox area ratio)
   priority.py       hazard-first speech builder
   config.py         thresholds, hazard/object class sets, symbol keyword map
-  classes_av.py     AV-7 trained schema + 14-name annotation vocabulary, hazard roles
+  classes_av.py     AV-6 trained schema (schema id derived from the class list)
+                    + 14-name annotation vocabulary, hazard roles
 web/index.html      mobile web app (camera, live loop, STT, TTS, GPS nav)
 scripts/            model download, dataset build, stairs up/down re-tag queue,
                     internet data sourcing

@@ -1,4 +1,4 @@
-# DATA_SOURCING.md — Build the AV-7 dataset from the internet (India + UAE)
+# DATA_SOURCING.md — Build the AV-6 dataset from the internet (India + UAE)
 
 You don't have to record every environment yourself. This guide assembles the
 dataset from three streams, in priority order:
@@ -91,17 +91,19 @@ class as a tag, draw the (usually single, obvious) box. Fast win for
 ### What no public set provides
 `pole`, `sign_washroom/lift/reception/wheelchair` in Indian/UAE styling, and
 `signboard` in Kannada/Hindi/Arabic. These MUST come from streams A/B —
-prioritize them when annotating.
+prioritize them when annotating. `signboard` is the reason: 50 boxes from the
+walkthrough frames trained to AP50 0.000, so the class is retired until the
+annotation pass gives it real support.
 
 ## Merge + train (unchanged pipeline)
 
 1. One Roboflow project, class list = the 14 names of `AV_ALL_CLASSES`
-   (`server/classes_av.py`), same order; the trained AV-7 subset is `scripts/av7.yaml`.
+   (`server/classes_av.py`), same order; the trained AV-6 subset is `scripts/av6.yaml`.
 2. Upload: A-frames + B-frames (with pre-labels) + `datasets/oi_av14` + Universe clones.
 3. Correct/annotate per the rules in `docs/TRAINING.md` Step 2.
 4. Generate version (70/20/10, brightness ±25%, blur ≤1px, rotation ±10°) → export YOLOv8.
 5. Train exactly as `docs/TRAINING.md` Step 3 (Colab T4, yolov8s, imgsz=832).
-6. Deploy: `models/av_obstacle.pt` → restart → `/health` shows `"object_schema": "av7"`.
+6. Deploy: `models/av_obstacle.pt` → restart → `/health` shows `"object_schema": "av6"`.
 
 For the paper, report per-class AP split by source mix (A only vs A+B+C) —
 that ablation is itself a contribution.

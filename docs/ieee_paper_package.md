@@ -20,7 +20,7 @@ that conventional assistive readers cannot provide: signage is frequently rotate
 or perspective-distorted, obstacle information is absent, and audio feedback is
 unprioritized. We present an end-to-end assistive vision system combining (i) an
 oriented-text pipeline that rectifies each detected quadrilateral to horizontal
-before recognition, (ii) an obstacle detector fine-tuned on a seven-class indoor
+before recognition, (ii) an obstacle detector fine-tuned on a six-class indoor
 navigation schema, (iii) monocular distance estimation converted to *walking
 steps* by fusing a class-height pinhole model with a ground-plane model and
 taking the conservative minimum, (iv) a rule-based priority scheduler that orders
@@ -85,7 +85,7 @@ models with released weights.
 Five layers (Input → Processing → AI → Logic → Output), client-server:
 smartphone browser captures frames/voice, FastAPI server runs inference,
 priority engine composes speech, phone renders TTS. Figure = repo README
-diagram. Latency budget table (measured 2026-08-29, laptop CPU, preliminary AV-7
+diagram. Latency budget table (measured 2026-08-29, laptop CPU, preliminary AV-6
 model): capture 30 ms · upload 60–150 ms · detection 102 ms p50 (153 p90) ·
 OCR 3,203 ms p50 (3,864 p90) · logic <1 ms · TTS start ~100 ms. OCR is the
 dominant cost and the obvious target for the next optimisation.
@@ -126,12 +126,12 @@ Fine-tuning it via deep-text-recognition-benchmark on SynthText and ICDAR-2015
 crops, then exporting to EasyOCR's custom-model format, remains available as
 future work. It is listed here as a direction, not a result.
 
-### 5.3 Object & obstacle detection — AV-7
+### 5.3 Object & obstacle detection — AV-6
 
-COCO covers person/vehicle/furniture but misses **stairs, doors, dustbins and
-signboards** — classes an indoor assistive user needs. The schema is *AV-7*:
+COCO covers person/vehicle/furniture but misses **stairs, doors and dustbins**
+— classes an indoor assistive user needs. The schema is *AV-6*:
 
-* `person, chair, table, door, stairs_up, dustbin, signboard`.
+* `person, chair, table, door, stairs_up, dustbin`.
 * Sources: 1,202 frames extracted at 0.5 fps from 8 indoor walkthrough videos
   (malls, hospitals, campuses; two public tours, six self-recorded), blur- and
   duplicate-filtered and pre-labelled by YOLOv8s so annotation is correction
@@ -142,14 +142,14 @@ signboards** — classes an indoor assistive user needs. The schema is *AV-7*:
   near-identical, so a frame-level split leaks validation into training. The
   harness re-proves disjointness on every run. Open Images contributes its own
   upstream train/validation assignment, which is honoured rather than re-split.
-* Resulting split (rebuilt 2026-08-29, pre-annotation): 1,726 train / 350 val
-  frames; 4,787 train / 691 val boxes; 361 empty pre-label frames dropped. Four
+* Resulting split (rebuilt 2026-08-29, pre-annotation): 1,726 train / 344 val
+  frames; 4,753 train / 675 val boxes; 367 empty pre-label frames dropped. Four
   self-recorded videos are held out for validation. One self-recorded video
   (215 labelled frames) is not yet re-imported; the figures must be
   regenerated after annotation.
 
-**Why seven classes and not fourteen.** The schema was designed with fourteen.
-Seven had no annotated boxes, and a declared-but-empty class is not free: the
+**Why six classes and not fourteen.** The schema was designed with fourteen.
+Eight lack the boxes to learn, and a declared-but-unlearnable class is not free: the
 model carries an output that can never fire, reports zero AP, and drags macro
 mAP down — while the runtime's name-based check still certifies the weights as
 ours. Declaring only what the weights can do is what makes C6 coherent. The
@@ -180,15 +180,25 @@ readers fail on — but it requires annotation that does not yet exist.
 | SynthText | 858k synth | Optional OBB pre-train | Converter ready; **optional, not run** |
 | Open Images V7 | 1,451 imgs / 2,722 boxes | door, stairs, dustbin volume | **Acquired** (`pull_open_datasets.py --per-class 400`) |
 | Walkthrough video (ours) | 1,202 frames / 8 videos | Indoor domain frames | **Acquired**, 219 ambiguous boxes hand-adjudicated |
-| **AV-7 split** (ours) | 1,726 train / 350 val frames; 5,478 boxes | Obstacle detector train + eval | **Built** 2026-08-29, leakage-safe by video; pre-annotation |
+| **AV-6 split** (ours) | 1,726 train / 344 val frames; 5,428 boxes | Obstacle detector train + eval | **Built** 2026-08-29, leakage-safe by video; pre-annotation |
 
-Classes and support in the AV-7 split (train / val boxes):
+Classes and support in the AV-6 split (train / val boxes):
 `person` 2533/266 · `door` 604/288 · `stairs_up` 534/46 · `dustbin` 730/30 ·
-`chair` 277/28 · `table` 75/17 · `signboard` 34/16.
+`chair` 277/28 · `table` 75/17.
 
-`signboard` is the sparsest trained class (16 val boxes); its AP must be
-reported beside its support, never alone. Seven further class names exist in the annotation
-vocabulary with zero boxes and are excluded from the trained schema — see §5.3.
+`table` is the sparsest trained class (17 val boxes); its AP must be reported
+beside its support, never alone. Eight further class names exist in the
+annotation vocabulary and are excluded from the trained schema — see §5.3.
+
+`signboard` was retired from the schema on 2026-08-29 after measurement: 50
+boxes across 42 of 986 frames trained to AP50 0.000. An EasyOCR sweep was
+evaluated as a source of automatic proposals and rejected — 11 of 75 sampled
+frames carry legible text, 8 of them from a single mall video, and a text
+region is not a sign extent, so such boxes would supervise text detection that
+EasyOCR already performs. Retiring it costs no runtime capability: sign
+*reading* runs OCR over the whole frame and never consults a detected class.
+This is the same argument §5.3 makes for the other retired names, applied to
+our own measurement rather than to an inherited assumption.
 
 ## 7. Evaluation protocol
 
@@ -198,10 +208,10 @@ vocabulary with zero boxes and are excluded from the trained schema — see §5.
 * **Recognition:** CRR/WRR on ICDAR15 crops, pre vs post fine-tune.
 * **Objects/symbols:** mAP@50, per-class AP (stairs highlighted).
 * **End-to-end latency:** ms/frame on (a) laptop CPU, (b) T4, (c) HF free tier.
-  Measured 2026-08-29 on the AV-7 val split, laptop CPU (i5-1145G7), 175 timed
+  Measured 2026-08-29 on the AV-6 val split, laptop CPU (i5-1145G7), 175 timed
   frames per run (`runs/eval/compare.md`):
 
-  | stage (p50 ms) | COCO baseline | AV-7 preliminary |
+  | stage (p50 ms) | COCO baseline | AV-6 preliminary |
   |---|---|---|
   | detect | 321 | **102** |
   | OCR | 3,896 | **3,203** |
@@ -209,7 +219,7 @@ vocabulary with zero boxes and are excluded from the trained schema — see §5.
   | cold start (s) | 7.5 | **3.5** |
 
   Frame-level hazard alert: COCO P 0.875 / R 0.236 / F1 0.372 (FP 5) versus
-  AV-7 preliminary P 0.987 / R 0.527 / F1 0.687 (FP 1). This is the one
+  AV-6 preliminary P 0.987 / R 0.527 / F1 0.687 (FP 1). This is the one
   vocabulary-independent comparison; the T4 and HF-tier rows are **[PENDING]**.
 * **Step distance:** MAE, RMSE, %within±1step; Bland-Altman plot.
 * **Ablations:** rotation-aug off · deskew off · OBB→HBB · priority off.
@@ -228,8 +238,8 @@ vocabulary with zero boxes and are excluded from the trained schema — see §5.
 
 ## 9. Reproducibility / release checklist
 
-☐ GitHub repo tag `v1.0-paper` ☐ trained obstacle weights (AV-7) ☐ trained
-OBB text weights ☐ AV-7 split + the 219 adjudicated review-queue verdicts ☐
+☐ GitHub repo tag `v1.0-paper` ☐ trained obstacle weights (AV-6) ☐ trained
+OBB text weights ☐ AV-6 split + the 219 adjudicated review-queue verdicts ☐
 training configs + seeds ☐ eval scripts and run JSONs ☐ demo video.
 
 Removed from this list: a symbol dataset and a user-study protocol, neither of

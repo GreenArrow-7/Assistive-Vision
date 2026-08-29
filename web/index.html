@@ -396,7 +396,7 @@ async function pollHealth(){
     const h=await fetch(API+'/health',{signal:AbortSignal.timeout(6000)}).then(r=>r.json());
     if(h.error){warmupEl.classList.add('show');$('warmupMsg').textContent='Server error: '+h.error;
       setStatus('Model load failed','err');return;}
-    state.schema=h.object_schema||'';   // 'av7' has no vehicle classes
+    state.schema=h.object_schema||'';   // anything but 'coco' is the indoor schema
     if(h.ready){
       if(!state.ready){state.ready=true;warmupEl.classList.remove('show');
         setStatus('Ready · v'+(h.version||'?')+(h.text_obb?' · OBB':''),'ok');
@@ -516,9 +516,13 @@ document.addEventListener('visibilitychange',()=>{ // save battery / mic when ba
 /* ---------- outdoor navigation ---------- */
 function navigateTo(dest){            // voice path: straight to GPS + Maps
   if(!dest){speak('Please say a destination.');return;}
-  // AV-7 is an indoor schema with no vehicle classes, so it cannot see a car.
+  // AV-6 is an indoor schema with no vehicle classes, so it cannot see a car.
   // Maps navigation unloads this page anyway; say so rather than go quiet.
-  const indoorOnly=state.schema==='av7'?
+  // Tested against 'coco', not against a schema NAME: the name carries the class
+  // count (av7 -> av6 when signboard was retired), so matching it hardcoded a
+  // value that goes stale every time the vocabulary changes -- and the warning
+  // silently stopped appearing the last time it did.
+  const indoorOnly=(state.schema&&state.schema!=='coco')?
     'Note: obstacle detection is indoor only and does not detect vehicles. ':'';
   speak(indoorOnly+'Getting your location for directions to '+dest);
   const open=url=>{location.href=url;};   // window.open is popup-blocked from voice callbacks

@@ -234,7 +234,7 @@ def test_coco_model_at_custom_path_is_not_treated_as_av14():
 
 
 def test_av14_model_detected_from_class_names():
-    assert detector.detect_schema(dict(enumerate(AV_CLASSES))) == detector.SCHEMA_AV7
+    assert detector.detect_schema(dict(enumerate(AV_CLASSES))) == detector.SCHEMA_AV
 
 
 def test_unknown_schema_is_refused_loudly():

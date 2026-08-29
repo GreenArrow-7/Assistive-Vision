@@ -1,24 +1,30 @@
-"""AV-7: the class schema the fine-tuned model is actually trained on.
+"""AV-6: the class schema the fine-tuned model is actually trained on.
+
+The schema id is DERIVED from this list (`SCHEMA_AV` in detector.py is
+`f"av{len(AV_CLASSES)}"`), so retiring or un-retiring a class cannot leave a
+name behind that overstates what the weights do.
 
 Design notes (defend these in the viva/paper):
   * No generic "obstacle" class — it has no consistent visual signature, so
     annotators disagree and mAP collapses. We name real objects and mark which
     ones BEHAVE as hazards (HAZARD set below). Hazard = a semantic role, not a
     visual class.
-  * Signs are trained classes, not OCR keywords — so the system still works
-    when a sign is a pictogram with no text (ISO 7001), which is exactly the
-    case OCR-only assistive readers fail on. `signboard` carries this today;
-    the five pictogram `sign_*` classes are annotated but not yet trained.
+  * Signs are intended to be trained classes, not OCR keywords — so the system
+    would still work when a sign is a pictogram with no text (ISO 7001), which
+    is exactly the case OCR-only assistive readers fail on. No sign class has
+    enough boxes yet, so none is trained and none is claimed. Reading text
+    signs is unaffected: `text_pipeline.detect_text` runs OCR over the WHOLE
+    frame and never consults a detected class.
 
-WHY 7 AND NOT 14. The schema was designed with 14 classes. Seven of them have
-zero annotated boxes, and a declared-but-empty class is not free: the model
-carries an output head that can never fire, reports 0 AP, and drags macro mAP
-down — while `detector.detect_schema` still certifies the weights as ours,
+WHY 6 AND NOT 14. The schema was designed with 14 classes. Eight have too few
+annotated boxes to learn, and a declared-but-unlearnable class is not free: the
+model carries an output head that can never fire, reports 0 AP, and drags macro
+mAP down — while `detector.detect_schema` still certifies the weights as ours,
 because it matches on class NAMES. A model that claims a class it cannot
 detect is exactly the silent-capability gap this codebase exists to prevent.
 So the schema states only what the weights can actually do.
 
-The seven omitted classes are not abandoned — the vocabulary is data-driven,
+The eight omitted classes are not abandoned — the vocabulary is data-driven,
 so annotating them and adding the name back here restores them. Their heights,
 spoken names, hazard roles and keyword routes are all still defined below,
 precisely so that re-adding a class is a one-line change.
@@ -31,18 +37,29 @@ precisely so that re-adding a class is a one-line change.
   pole         no boxes in the walkthrough footage or Open Images.
   sign_*       pictogram signs; they exist only in our own frames and need
                the Roboflow annotation pass.
+  signboard    RETIRED 2026-08-29 after measurement, not assumption: 50 boxes
+               across 42 of 986 frames trained to AP50 0.000 (34 train / 16 val).
+               An EasyOCR sweep of the walkthrough frames was tried as a source
+               of proposals and rejected — only 11 of 75 sampled frames carry
+               legible text, 8 of them from one mall video, and a text-region
+               box is not a sign extent, so it would teach text detection that
+               EasyOCR already does. Hand-drawn boxes are the only real source.
 """
 
 # Vocabulary retired from the trained schema, kept for the migration path.
 # scripts/reindex_labels.py maps old label indices onto the list below BY NAME;
 # removing a class shifts every index above it (dustbin 7 -> 5), so label files
 # written against the 14-class list MUST be reindexed, never reused as-is.
+#
+# signboard leads this list on purpose: retiring it that way leaves every
+# AV_ALL_CLASSES index exactly where it was, so no label file written against
+# the annotation vocabulary changes meaning.
 AV_RETIRED = [
-    "stairs_down", "pole", "sign_washroom", "sign_exit", "sign_lift",
-    "sign_reception", "sign_wheelchair",
+    "signboard", "stairs_down", "pole", "sign_washroom", "sign_exit",
+    "sign_lift", "sign_reception", "sign_wheelchair",
 ]
 
-# --- 7 classes, index order MUST match data.yaml used for training ---
+# --- 6 classes, index order MUST match data.yaml used for training ---
 AV_CLASSES = [
     "person",          # 0
     "chair",           # 1
@@ -50,7 +67,6 @@ AV_CLASSES = [
     "door",            # 3
     "stairs_up",       # 4
     "dustbin",         # 5
-    "signboard",       # 6   generic text sign (feeds OCR)
 ]
 
 # What a HUMAN may annotate. Training narrows this to AV_CLASSES via
@@ -153,7 +169,7 @@ DORMANT_HAZARDS = (AV_HAZARDS | AV_CRITICAL) - set(AV_CLASSES)
 CRITICAL_ACTIVE = bool(AV_CRITICAL & set(AV_CLASSES))
 
 
-def data_yaml(path: str = "../datasets/av7") -> str:
+def data_yaml(path: str = "../datasets/av6") -> str:
     names = "\n".join(f"  {i}: {c}" for i, c in enumerate(AV_CLASSES))
     return (f"path: {path}\ntrain: train/images\nval: valid/images\n"
             f"test: test/images\n\nnames:\n{names}\n")
