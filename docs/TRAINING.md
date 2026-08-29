@@ -8,6 +8,10 @@ Total effort: ~1 day recording/annotating + one overnight Colab run. Free.
 slightly down, walk slowly, pause at every sign/door/staircase/obstacle,
 capture each thing from ~1 m / 3 m / 6 m. Include dim and backlit scenes.
 
+**Descending stairs?** `scripts/stairs_queue.py --make` queues every Open
+Images staircase for a one-keypress up/down verdict in `review_crops.py`; see
+`docs/DATA_SOURCING.md` C1. This is the critical class.
+
 **Can't record everything?** See `docs/DATA_SOURCING.md` — it sources extra
 footage from YouTube walkthroughs of Indian/UAE malls/hospitals/colleges
 (`scripts/fetch_videos.py`) and pre-labeled boxes from Open Images

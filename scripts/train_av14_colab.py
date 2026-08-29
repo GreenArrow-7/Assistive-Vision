@@ -1,18 +1,21 @@
-"""One Colab session -> models/av_obstacle.pt (AV-14 obstacle detector).
+"""One Colab session -> models/av_obstacle.pt (AV-7 obstacle detector).
 
 Local prep (this machine, no GPU needed):
   1. python scripts/merge_review_queue.py --out datasets/av14_merged
+     python scripts/reindex_labels.py --src datasets/av14_merged \
+         --out datasets/av7_merged
   2. python scripts/pull_open_datasets.py --per-class 400 --out datasets/oi_av14
-  3. python scripts/prepare_split.py --src datasets/av14_merged \
-         --out datasets/av14_split --schema av7 --extra datasets/oi_av14 \
-         --allow-sparse
-  4. zip datasets/av14_split -> av14_split.zip -> upload to Google Drive
+     python scripts/reindex_labels.py --src datasets/oi_av14 --out datasets/oi_av7
+  3. python scripts/prepare_split.py --src datasets/av7_merged \
+         --out datasets/av7_split --schema av7 --extra datasets/oi_av7
+  4. zip datasets/av7_split -> av7_split.zip -> upload to Google Drive
+     (prepare_split.py already wrote it; verified to pass the gate below)
 
 Then paste this file into a Colab cell (Runtime > T4 GPU) and run.
 Cells are marked `# %%` so it also runs top-to-bottom as a script.
 """
 # %% ---------------------------------------------------------------- config
-DATASET_ZIP = "/content/drive/MyDrive/av14_split.zip"
+DATASET_ZIP = "/content/drive/MyDrive/av7_split.zip"
 EPOCHS = 120
 IMGSZ = 832        # signs are small objects; 640 loses them at distance
 BATCH = 12         # T4-safe at 832
@@ -31,7 +34,7 @@ if IN_COLAB:
     from google.colab import drive
     drive.mount("/content/drive")
 
-work = Path("/content/av14" if IN_COLAB else "datasets/av14_colab")
+work = Path("/content/av7" if IN_COLAB else "datasets/av7_colab")
 if not (work / "data.yaml").exists():
     work.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(DATASET_ZIP) as z:

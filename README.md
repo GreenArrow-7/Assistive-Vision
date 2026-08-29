@@ -81,7 +81,8 @@ server/
   config.py         thresholds, hazard/object class sets, symbol keyword map
   classes_av.py     AV-7 trained schema + 14-name annotation vocabulary, hazard roles
 web/index.html      mobile web app (camera, live loop, STT, TTS, GPS nav)
-scripts/            model download, dataset build, internet data sourcing
+scripts/            model download, dataset build, stairs up/down re-tag queue,
+                    internet data sourcing
                     (fetch_videos.py, pull_open_datasets.py — see
                     docs/DATA_SOURCING.md), YOLO-OBB text training guide
 tests/              146 pytest tests: pipeline logic, API limits, dataset tooling

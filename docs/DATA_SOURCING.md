@@ -51,8 +51,23 @@ python scripts/pull_open_datasets.py --per-class 400 --out datasets/oi_av14
 ```
 
 Covers person, chair, table, door, stairs, dustbin with existing boxes.
-**Must-do:** re-tag descending stairs as `stairs_down` in Roboflow
-(`review_stairs.txt` lists the affected images).
+
+**Must-do:** Open Images has ONE "Stairs" class, so every staircase arrives as
+`stairs_up`. `stairs_down` is the sole critical class, so the descending ones
+have to be split out:
+
+```bash
+python scripts/stairs_queue.py --make        # 579 boxes / 438 images queued
+python scripts/review_crops.py --queue datasets/oi_av14/stairs_queue.csv \n    --images datasets/oi_av14/images         # 1 = up, 2 = down, D = drop
+python scripts/stairs_queue.py --apply       # rewrites the label classes
+```
+
+This stays inside the by-name pipeline; a Roboflow round trip re-imports by
+class INDEX, which is the collision `docs/TRAINING.md` Step 2 warns about.
+To then TRAIN the class, move `stairs_down` from `AV_RETIRED` to `AV_CLASSES`
+in `server/classes_av.py` and re-run `reindex_labels.py` + `prepare_split.py` —
+until that edit the reindexer drops the new boxes, because the trained schema
+has no such class.
 
 ### C2. Roboflow Universe (download in Roboflow, remap classes on import)
 
