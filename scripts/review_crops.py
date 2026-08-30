@@ -19,7 +19,7 @@ import csv
 import json
 import sys
 import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import cv2
@@ -262,7 +262,11 @@ def main(queue: Path, img_dir: Path, port: int, open_browser: bool):
     if open_browser:
         webbrowser.open(url)
     try:
-        HTTPServer(("127.0.0.1", port), Handler).serve_forever()
+        # Threading, not plain HTTPServer: the page pulls TWO images per row and
+        # Chrome opens parallel keep-alive connections, so a single-threaded
+        # server blocks on the first idle one and the tool silently stops
+        # responding -- verdicts then look like they were never pressed.
+        ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
     except KeyboardInterrupt:
         left = sum(1 for r in rows if not (r.get("decision") or "").strip())
         print(f"\nsaved {queue} - {len(rows) - left} decided, {left} left")
