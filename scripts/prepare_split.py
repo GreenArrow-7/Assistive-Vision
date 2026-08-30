@@ -11,14 +11,14 @@ class names are COCO, and a COCO-class model at models/av_obstacle.pt is the
 documented safety failure server/detector.detect_schema exists to catch.
 
 Usage:
-  python scripts/prepare_split.py --src datasets/av14_seed --out datasets/av14_seed_split --schema av6
+  python scripts/prepare_split.py --src datasets/av14_seed --out datasets/av14_seed_split --schema av7
   # COCO baseline set (regenerates what runs/eval/coco_baseline.* was
   # measured on). Kept out of the defaults on purpose: its data.yaml
   # declares COCO names, so training on it yields a COCO model -- exactly
   # the file that must never land at models/av_obstacle.pt.
   python scripts/prepare_split.py --src datasets/av_raw --out datasets/av_finetune
   python scripts/prepare_split.py --src datasets/av14 --out datasets/av14_split \
-      --schema av6
+      --schema av7
 """
 import argparse
 import os
@@ -63,7 +63,7 @@ def resolve_schema(requested: str, labels) -> str:
     0-13) is indistinguishable from an AV-14 set. Nothing in a YOLO .txt file
     records the vocabulary.
 
-    So we never guess 'av6'. Guessing it is precisely the dangerous guess: it
+    So we never guess 'av7'. Guessing it is precisely the dangerous guess: it
     stamps AV-14 names onto COCO-trained weights, and server/detector.py
     identifies models by their class NAMES, so the result loads as the AV-14
     fine-tune and silently swaps in AV_HAZARDS — which contains no vehicles.
@@ -75,7 +75,7 @@ def resolve_schema(requested: str, labels) -> str:
     if requested == SCHEMA_AV:
         if hi >= len(AV_CLASSES):
             raise SystemExit(
-                f"--schema av6 but labels contain class index {hi}; the AV schema "
+                f"--schema av7 but labels contain class index {hi}; the AV schema "
                 f"defines only 0-{len(AV_CLASSES) - 1}. These look like uncorrected "
                 "COCO pre-labels: remap them before splitting."
             )
@@ -87,7 +87,7 @@ def resolve_schema(requested: str, labels) -> str:
     raise SystemExit(
         f"cannot infer label schema: highest class index is {hi}, which fits "
         f"both AV (0-{len(AV_CLASSES) - 1}) and a COCO subset. Pass "
-        "--schema av6 or --schema coco; guessing would put the wrong names "
+        "--schema av7 or --schema coco; guessing would put the wrong names "
         "in data.yaml."
     )
 
@@ -256,7 +256,7 @@ def prepare(src: Path, out: Path, val_frac: float, schema: str = "auto",
         counts[split] += 1
 
     # server/classes_av.AV_CLASSES is the single source of truth for the schema.
-    # scripts/av6.yaml hand-duplicates the same list (it is uploaded to
+    # scripts/av7.yaml hand-duplicates the same list (it is uploaded to
     # Roboflow/Colab standalone); tests/test_prepare_split.py fails if the two
     # ever drift. classes_av.data_yaml() is not reused here because it emits the
     # train/valid/test layout, and this script writes train/val only.

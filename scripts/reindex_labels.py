@@ -14,7 +14,7 @@ server.classes_av.AV_CLASSES. Boxes whose class does not exist in the target are
 DROPPED, and frames left with no boxes are kept as background negatives.
 
   python scripts/reindex_labels.py --src datasets/av14_merged \
-      --out datasets/av6_merged
+      --out datasets/av7_merged
 """
 import argparse
 import shutil

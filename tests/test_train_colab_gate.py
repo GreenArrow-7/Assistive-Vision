@@ -1,6 +1,6 @@
 """The Colab trainer's coverage gate must refuse an incomplete dataset.
 
-Weights trained from a 14-name data.yaml identify as 'av6' to
+Weights trained from a 14-name data.yaml identify as 'av7' to
 server/detector.detect_schema, so the server grants them the full AV_HAZARDS
 set -- including stairs_down, the only AV_CRITICAL class. If some of those
 classes had no training boxes, the model silently never raises them. That is

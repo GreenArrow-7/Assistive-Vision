@@ -38,19 +38,19 @@ is enough. The steps below are the mechanics.
 2. Upload `images/` **and** `labels/` together (it imports the pre-labels).
 3. Set the class list to **exactly these 14 names, in this order** — the
    annotation vocabulary `AV_ALL_CLASSES` in `server/classes_av.py`. The first
-   six are the trained AV-6 schema (`scripts/av6.yaml`); the last eight are
+   seven are the trained AV-7 schema (`scripts/av7.yaml`); the last seven are
    annotation-only until they have boxes, and `scripts/reindex_labels.py`
    maps labels onto the trained schema by name:
 
    | # | class | # | class |
    |---|---|---|---|
-   | 0 | person | 7 | stairs_down (annotation-only, **critical**) |
+   | 0 | person | 7 | signboard (annotation-only) |
    | 1 | chair | 8 | pole (annotation-only) |
    | 2 | table | 9 | sign_washroom (annotation-only) |
    | 3 | door | 10 | sign_exit (annotation-only) |
    | 4 | stairs_up | 11 | sign_lift (annotation-only) |
    | 5 | dustbin | 12 | sign_reception (annotation-only) |
-   | 6 | signboard (annotation-only) | 13 | sign_wheelchair (annotation-only) |
+   | 6 | stairs_down (**critical**; trained since the 2026-08-30 re-tag) | 13 | sign_wheelchair (annotation-only) |
 
    **Annotation rules — follow strictly or mAP suffers:**
    * No generic "obstacle" class. It has no consistent appearance; annotators
@@ -72,7 +72,7 @@ is enough. The steps below are the mechanics.
    * Correct the pre-labels: the COCO pre-labeler will mislabel dustbins as
      "vase", poles as "parking meter" etc. Fix the class, keep the box —
      EXCEPT for vehicles (car, bus, truck, motorcycle, bicycle, train):
-     DELETE those boxes entirely. AV-6 has no vehicle class, and the COCO
+     DELETE those boxes entirely. AV-7 has no vehicle class, and the COCO
      indices collide with the annotation vocabulary (bus=5 imports as
      dustbin, car=2 as table), so "keeping the box" poisons the most safety-critical classes.
    * Do not upload raw pre-labels: run `python scripts/remap_to_av14.py`
@@ -83,8 +83,8 @@ is enough. The steps below are the mechanics.
    blur ≤ 1 px, rotation ±10°. Export → **YOLOv8** → copy the download code.
 
 ## Step 3 — Train on Google Colab (free T4, overnight)
-No-Roboflow path: `python scripts/prepare_split.py --src datasets/av6_merged
---out datasets/av6_split --schema av6 --extra datasets/oi_av6`, zip the split,
+No-Roboflow path: `python scripts/prepare_split.py --src datasets/av7_merged
+--out datasets/av7_split --schema av7 --extra datasets/oi_av7`, zip the split,
 then run `scripts/train_av14_colab.py` in Colab (it refuses a split with an
 empty class unless `ALLOW_SPARSE`). Roboflow path:
 
@@ -99,29 +99,29 @@ ds = rf.workspace("YOUR_WS").project("YOUR_PROJECT").version(1).download("yolov8
 !yolo detect train model=yolov8s.pt data={ds.location}/data.yaml \
     epochs=120 imgsz=832 batch=12 patience=30 \
     degrees=8 hsv_v=0.5 fliplr=0.5 mosaic=1.0 close_mosaic=15 \
-    name=av6
+    name=av7
 
 # per-class AP -> paper Table T3. Watch stairs_down and the sign_* classes:
 # they are the classes that justify the whole contribution.
-!yolo detect val model=runs/detect/av6/weights/best.pt \
+!yolo detect val model=runs/detect/av7/weights/best.pt \
     data={ds.location}/data.yaml
 
 from google.colab import files
-files.download('runs/detect/av6/weights/best.pt')   # rename -> av_obstacle.pt
+files.download('runs/detect/av7/weights/best.pt')   # rename -> av_obstacle.pt
 ```
 
 ## Step 4 — Deploy (zero code changes)
 Put the file at `models/av_obstacle.pt` and restart the server. The detector
-auto-loads it (check `/health` → `"object_schema": "av6"`) and stops
+auto-loads it (check `/health` → `"object_schema": "av7"`) and stops
 filtering to COCO classes, so your new stairs/door/sign classes flow straight
 through detection → steps → priority speech.
 
 **The schema is read from the model's class names, not from the filename.**
 If you drop a model there whose classes are COCO (e.g. you trained before
-correcting the labels to AV-6), `/health` reports `"object_schema": "coco"`
-and COCO hazard semantics are applied — it does *not* pretend to be AV-6.
+correcting the labels to AV-7), `/health` reports `"object_schema": "coco"`
+and COCO hazard semantics are applied — it does *not* pretend to be AV-7.
 This matters: `AV_HAZARDS` contains no vehicles, so a COCO model treated as
-AV-6 would silently stop flagging cars, buses and bikes as hazards. A model
+AV-7 would silently stop flagging cars, buses and bikes as hazards. A model
 matching neither vocabulary is refused at startup and surfaces as
 `/health` → `"error"`.
 

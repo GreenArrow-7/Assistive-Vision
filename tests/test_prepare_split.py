@@ -111,10 +111,10 @@ def test_holdout_never_splits_a_video_across_train_and_val(tmp_path):
 
 
 def test_av14_yaml_has_not_drifted_from_the_schema():
-    """scripts/av6.yaml duplicates AV_CLASSES by hand; index order is
+    """scripts/av7.yaml duplicates AV_CLASSES by hand; index order is
     load-bearing, so a silent divergence would mislabel every prediction."""
     cfg = yaml.safe_load(
-        (Path(__file__).resolve().parent.parent / "scripts" / "av6.yaml").read_text())
+        (Path(__file__).resolve().parent.parent / "scripts" / "av7.yaml").read_text())
     assert [cfg["names"][i] for i in range(len(cfg["names"]))] == AV_CLASSES
 
 

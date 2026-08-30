@@ -281,25 +281,27 @@ def test_dormant_hazards_are_derived_not_hand_listed():
     assert cav.CRITICAL_ACTIVE == bool(cav.AV_CRITICAL & trained)
 
 
-def test_critical_path_is_dormant_and_says_so():
-    """stairs_down is annotated but not trained, so the interrupt-everything
-    branch cannot fire. The system must report that, not imply it works."""
+def test_critical_path_is_active_and_says_so():
+    """stairs_down is trained (un-retired 2026-08-30 after the Open Images
+    re-tag), so the interrupt-everything branch is reachable again and the
+    derived flags must say so."""
     from server import classes_av as cav
-    assert cav.CRITICAL_ACTIVE is False
-    assert "stairs_down" in cav.DORMANT_HAZARDS
-    # and the dormant branch really is unreachable for any trained class
-    assert not any(c in cav.AV_CRITICAL for c in cav.AV_CLASSES)
+    assert cav.CRITICAL_ACTIVE is True
+    assert "stairs_down" not in cav.DORMANT_HAZARDS
+    # the critical role is now carried by a trained class
+    assert any(c in cav.AV_CRITICAL for c in cav.AV_CLASSES)
 
 
-def test_build_speech_raises_no_critical_while_dormant():
-    """End-to-end: even handed a hazard for every trained class, no 'Warning!'
-    is emitted, because none of them carries the critical role."""
+def test_build_speech_raises_the_critical_from_trained_classes():
+    """End-to-end: handed a hazard for every trained hazard class, the
+    critical one must interrupt first — 'Warning!' leads the speech, and
+    criticals still count toward hazard_count."""
     from server import classes_av as cav
     hazards = [{"label": c, "raw": c, "direction": "straight ahead",
                 "proximity": "very close", "steps": 2}
                for c in cav.AV_CLASSES if c in cav.AV_HAZARDS]
     out = priority.build_speech(hazards, [], [], [])
-    assert "Warning!" not in out["speech"], out["speech"]
+    assert out["speech"].startswith("Warning!"), out["speech"]
     assert out["hazard_count"] == len(hazards)
 
 

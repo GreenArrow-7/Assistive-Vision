@@ -186,14 +186,15 @@ def health():
         "error": _state["error"],
         "object_model": config.OBJECT_MODEL,
         # the schema the loaded model actually speaks, not which file was found:
-        # "av6" | "coco" | null (not loaded). A model whose classes match
+        # "av7" | "coco" | null (not loaded). A model whose classes match
         # neither is refused at warmup and surfaces here as an "error".
         "object_schema": detector.active_schema(),
         # Can the loaded model raise the interrupt-everything alert at all?
-        # AV_CRITICAL names stairs_down, which is annotated but not trained, so
-        # the "Warning! Stop and proceed carefully" branch is currently
-        # unreachable. A hazard system that cannot fire its top alert must say
-        # so out loud rather than leave the caller to assume it works.
+        # stairs_down is trained in the schema (CRITICAL_ACTIVE), but the
+        # "Warning! Stop and proceed carefully" branch is only reachable when
+        # the loaded weights actually speak that schema — a COCO fallback
+        # cannot emit the class, and /health must not claim an alert the
+        # running model cannot raise.
         "critical_alert": (detector.active_schema() == detector.SCHEMA_AV
                            and classes_av.CRITICAL_ACTIVE),
         "dormant_hazards": sorted(classes_av.DORMANT_HAZARDS),

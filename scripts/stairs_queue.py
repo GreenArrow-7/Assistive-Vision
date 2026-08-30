@@ -20,9 +20,9 @@ by-name pipeline instead, and reuses review_crops.py as the viewer:
 never moves a box and never adds one. Decisions are matched on the box
 geometry the queue recorded, so a re-run is idempotent.
 
-Then, to actually train the class, un-retire it:
+Then, to actually train the class, un-retire it (done 2026-08-30):
   * move "stairs_down" from AV_RETIRED to AV_CLASSES in server/classes_av.py
-  * python scripts/reindex_labels.py --src datasets/oi_av14 --out datasets/oi_av6
+  * python scripts/reindex_labels.py --src datasets/oi_av14 --out datasets/oi_av7
   * rebuild the split
 Until that edit, reindex_labels DROPS every stairs_down box, because the
 trained schema does not contain the class -- which is the honest behaviour, not
