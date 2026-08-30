@@ -6,12 +6,13 @@ paper is not a plan: a reviewer reads the past tense as work performed, and
 reporting unperformed work as performed is fabrication regardless of intent.
 
 Repo state at audit (2026-08-29): 146 passing tests; a preliminary detector
-(`models/av_obstacle_candidate.pt`, YOLOv8n/640/12ep) was trained and evaluated,
-then superseded: it speaks the retired seven-class schema, so `detect_schema`
-now refuses it outright — the guard working as designed. Its measurements stand
-as a record of that schema (mAP@50 0.293; hazard-frame recall 0.236 -> 0.527
-over the COCO baseline; `person` recall regressed, which is why it was never
-deployed). The AV-6 YOLOv8s run is pending.
+(`models/av_obstacle_candidate.pt`, YOLOv8n/640/36ep, trained 2026-08-30) exists
+and is evaluated in `runs/eval/av6_local.md`: mAP@50 0.334, hazard-frame recall
+0.252 -> 0.463 at precision 0.958. It is NOT deployed, because `person` recall
+regresses 0.164 -> 0.061 at the deployed operating point. An earlier 7-class
+candidate was superseded by the schema change and is now refused outright by
+`detect_schema` — the guard working as designed. The AV-6 YOLOv8s run is pending,
+and no weights are released until one passes both gates.
 
 ---
 

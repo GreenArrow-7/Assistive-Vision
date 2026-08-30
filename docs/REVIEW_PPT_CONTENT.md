@@ -406,38 +406,49 @@ for each walkthrough video:
 
 ### Slide 26 — Performance Metrics
 **Measured (real):**
-- Test suite runtime: **~40 s**, 146 tests
+- Test suite runtime: **~40 s**, 152 tests (green in CI on Ubuntu / Python 3.11 as well as locally)
 - Frame transport size: ~150 KB per frame at 960 px, JPEG q0.8
 - Live-assist cadence: 2.6 s per cycle
 - COCO baseline measured 2026-08-29 with `scripts/evaluate.py --weights yolov8n.pt --data datasets/av6_split/data.yaml --limit 200` on a laptop CPU (`runs/eval/coco_baseline.md`, val = 4 held-out phone videos + Open Images val): hazard-frame recall 0.236 at precision 0.875 — COCO yolov8n at the deployed 0.62 person gate misses most people in phone footage and cannot see doors, stairs or dustbins at all. Full-pipeline latency p50 3.9 s on an idle CPU, of which EasyOCR is 3.8 s and YOLOv8n 0.14 s.
-- **Preliminary AV-6 fine-tune trained 2026-08-29** (`scripts/train_local_baseline.py`: YOLOv8n, 640 px, 12 epochs, ~4 h on this CPU) → `models/av_obstacle_candidate.pt`, evaluated in `runs/eval/av6_local.md`. It is deliberately **not** installed as `models/av_obstacle.pt`; the final model is the Colab run (YOLOv8s, 832 px, 120 epochs).
+- **Preliminary AV-6 fine-tune trained 2026-08-30** (`scripts/train_local_baseline.py`: YOLOv8n, 640 px, 40 epochs requested, early-stopped at 36 by `patience=12`, ~10 h on this CPU) → `models/av_obstacle_candidate.pt`, evaluated in `runs/eval/av6_local.md`. It is deliberately **not** installed as `models/av_obstacle.pt` — see slide 26b. The final model is the Colab run (YOLOv8s, 832 px, 120 epochs).
 
-**Measured on the val split** (4 held-out phone videos + Open Images val). The preliminary column was measured on the 7-class schema, before `signboard` was retired (350 images / 691 boxes); the final column will be measured on AV-6 (344 images / 675 boxes):
+**Measured on the AV-6 val split** (344 images / 675 boxes: 4 held-out phone videos + Open Images val), laptop CPU, `runs/eval/compare.md`:
 
-| Metric | COCO baseline | Preliminary, 7-class (YOLOv8n, 12 ep) | AV-6 final (YOLOv8s, 120 ep) |
+| Metric | COCO baseline | AV-6 preliminary (YOLOv8n, 36 ep) | AV-6 final (YOLOv8s, 120 ep) |
 |---|---|---|---|
-| mAP@50 | undefined (COCO vocabulary vs AV labels) | **0.293** (0.342 over the six retained classes) | `[PENDING]` |
-| mAP@50-95 | undefined | **0.177** | `[PENDING]` |
+| mAP@50 | undefined (COCO vocabulary vs AV labels) | **0.334** | `[PENDING]` |
+| mAP@50-95 | undefined | **0.208** | `[PENDING]` |
+| SAFETY subset (`stairs_up`, `door`) | undefined | **0.427** | `[PENDING]` |
 | AP `stairs_down` | n/a (no class) | n/a until annotated | n/a until annotated |
 | AP `sign_*` (mean) | n/a (no class) | n/a until annotated | n/a until annotated |
-| Hazard-frame recall | 0.236 (P 0.875, F1 0.372) | **0.527** (P 0.987, F1 0.687) | `[PENDING]` |
-| Latency p50 / p90 (CPU, full pipeline) | 4,262 / 6,486 ms | **3,330 / 4,016 ms** | `[PENDING]` |
-| Detector alone, p50 | 321 ms | **102 ms** | `[PENDING]` |
+| Hazard-frame P / R / F1 | 0.860 / 0.252 / 0.389 | **0.958 / 0.463 / 0.624** | `[PENDING]` |
+| Hazard-frame false alarms | 6 | **3** | `[PENDING]` |
+| Latency p50 / p90 (CPU, full pipeline) | 3,576 / 4,417 ms | **3,282 / 4,134 ms** | `[PENDING]` |
+| Detector alone, p50 | 119 ms | **96 ms** | `[PENDING]` |
+| Cold start | 9.0 s | **6.1 s** | `[PENDING]` |
 
 Per-class AP50 of the preliminary model, printed beside its support — the three
 classes COCO cannot express at all are where the fine-tune earns its place:
 
 | class | AP50 | val boxes | COCO recall → AV-6 recall (deployed thresholds) |
 |---|---|---|---|
-| `dustbin` | 0.766 | 30 | 0.000 → **0.909** |
-| `stairs_up` | 0.463 | 46 | 0.000 → **0.375** |
-| `door` | 0.358 | 288 | 0.000 → **0.317** |
-| `chair` | 0.289 | 28 | 0.471 → 0.294 |
-| `person` | 0.162 | 266 | 0.164 → 0.073 |
+| `dustbin` | 0.694 | 30 | 0.000 → **1.000** |
+| `stairs_up` | 0.471 | 46 | 0.000 → **0.269** |
+| `door` | 0.384 | 288 | 0.000 → **0.210** |
+| `chair` | 0.277 | 28 | 0.471 → 0.333 |
+| `person` | 0.167 | 266 | 0.164 → **0.061** |
 | `table` | 0.011 | 17 | 0.250 → 0.000 |
-| `signboard` | 0.000 | 16 | 0.000 → 0.000 — **retired from the schema after this run** |
 
-  > Speaker note: report the regression, do not hide it. `person` drops because COCO carries millions of person boxes and we have 2,533 indoor ones; `table`/`signboard` have too few boxes to learn (the harness flags any class under 30 val boxes as noise). The frame-level hazard gain is real and is what the user experiences. The 120-epoch YOLOv8s run is expected to recover `person`; that model, not this one, is what gets deployed.
+### Slide 26b — Why this model is NOT deployed
+
+It wins the headline metric and still fails the check that matters:
+
+- **Passes the hazard gate.** Frame-level recall 0.252 → 0.463 while false alarms fall 6 → 3. Nearly double the obstacles caught, at higher precision.
+- **Fails the `person` gate.** Deployed recall 0.164 → **0.061**. Person is the most common indoor hazard; 6% recall means roughly nineteen of twenty people are missed. The aggregate gain comes from doors, stairs and bins compensating for a detector that has largely stopped seeing people.
+- Deploying it would trade a visible improvement for an invisible regression on the single most important class — the silent-capability failure this project is built around. It stays at `models/av_obstacle_candidate.pt`.
+- **The cause is data, not epochs.** 2,533 indoor person boxes against COCO's millions. YOLOv8s at 832 px for 120 epochs is the fix; this run early-stopped at 36 of 40 because fitness plateaued.
+
+  > Speaker note: this is the strongest slide in the deck. Any group can show a metric going up. Showing that you measured a second metric, found it went down, and refused to ship on that basis is what a reviewer is looking for. Say plainly: the model is better at the environment and worse at people, and people matter most.
 
 ### Slide 27 — Evaluation Methodology (Why Our Numbers Will Be Trustworthy)
 - **Split by video, never by frame.** Consecutive 1 fps frames from one walkthrough are near-identical; a random frame split leaks the validation set into training and reports a fantasy mAP. Whole videos are held out, and the harness re-proves disjointness on every run.

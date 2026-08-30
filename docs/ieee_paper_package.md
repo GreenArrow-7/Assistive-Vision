@@ -31,11 +31,14 @@ by its class names rather than its filename and refuses an unrecognised
 vocabulary, and the dataset tooling refuses a split declaring a class it cannot
 populate — together closing a silent capability-loss failure mode that no
 accuracy metric reveals. On our held-out split a preliminary
-detector (YOLOv8n, 640 px, 12 epochs) achieves mAP@50 0.293 and raises
-frame-level hazard recall from 0.236 to 0.527 at precision 0.987 over the
-COCO baseline; per-frame server latency is 3,330 ms at p50 on a laptop CPU,
-of which text recognition is 3,203 ms and detection 102 ms. The final
-detector (YOLOv8s, 832 px, 120 epochs) is **[PENDING]**.
+detector (YOLOv8n, 640 px, 36 epochs) achieves mAP@50 0.334 and raises
+frame-level hazard recall from 0.252 to 0.463 while halving false alarms
+(precision 0.860 to 0.958) over the COCO baseline; per-frame server latency is
+3,282 ms at p50 on a laptop CPU, of which text recognition is 3,141 ms and
+detection 96 ms. That model is reported but **not deployed**: its `person`
+recall regresses from 0.164 to 0.061 at the deployed operating point, and a
+detector that stops seeing people is unacceptable whatever its aggregate score.
+The final detector (YOLOv8s, 832 px, 120 epochs) is **[PENDING]**.
 Code and the dataset pipeline are released.
 
 > **Integrity.** Every `[PENDING]` is produced by `scripts/evaluate.py` on our own
@@ -218,9 +221,24 @@ our own measurement rather than to an inherited assumption.
   | total | 4,262 | **3,330** |
   | cold start (s) | 7.5 | **3.5** |
 
-  Frame-level hazard alert: COCO P 0.875 / R 0.236 / F1 0.372 (FP 5) versus
-  AV-6 preliminary P 0.987 / R 0.527 / F1 0.687 (FP 1). This is the one
+  Frame-level hazard alert: COCO P 0.860 / R 0.252 / F1 0.389 (FP 6) versus
+  AV-6 preliminary P 0.958 / R 0.463 / F1 0.624 (FP 3). This is the one
   vocabulary-independent comparison; the T4 and HF-tier rows are **[PENDING]**.
+
+  Per-class AP@50 with support (AV-6 preliminary): `dustbin` 0.694 (30 val
+  boxes), `stairs_up` 0.471 (46), `door` 0.384 (288), `chair` 0.277 (28),
+  `person` 0.167 (266), `table` 0.011 (17). The harness marks any class under 30
+  val boxes as noise, which covers `chair` and `table`.
+
+  **A negative result we report rather than bury.** The three classes COCO cannot
+  express — dustbin, stairs, door — go from 0.000 deployed recall to 1.000, 0.269
+  and 0.210, which is the entire case for a custom schema. In the same run
+  `person` falls from 0.164 to 0.061, because the fine-tuning set holds 2,533
+  indoor person boxes against COCO's millions. The aggregate hazard-frame metric
+  improves regardless, since the newly detected classes compensate. Reporting only
+  that aggregate would describe a system materially worse at detecting people as an
+  unqualified improvement, so the per-class operating point is reported beside it
+  and the model is withheld from deployment.
 * **Step distance:** MAE, RMSE, %within±1step; Bland-Altman plot.
 * **Ablations:** rotation-aug off · deskew off · OBB→HBB · priority off.
 * **User study (n ≥ 10, ethics approval + informed consent):** 3 tasks
