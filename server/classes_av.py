@@ -30,11 +30,16 @@ spoken names, hazard roles and keyword routes are all still defined below,
 precisely so that re-adding a class is a one-line change.
 
   stairs_down  UN-RETIRED 2026-08-30: the 579 Open Images "Stairs" boxes were
-               re-tagged one by one in the review queue (scripts/stairs_queue.py)
-               — 119 descending / 372 ascending / 88 dropped (escalators,
-               ladders, murals, rotated frames). That gives the critical class
-               real boxes on both sides of the split, so AV_CRITICAL's
-               "Warning! Stop and proceed carefully" path is ACTIVE again.
+               re-tagged via a model-proposed, HUMAN-VERIFIED pass. A vision-
+               model sweep proposed 119 descending; a human then reviewed every
+               proposed descending box in the review queue (the audit record is
+               datasets/oi_av14/stairs_verify.csv) and confirmed 65, demoted 53
+               to stairs_up, dropped 1. Final: 65 descending / 425 ascending /
+               89 dropped. The critical class has verified boxes on both sides
+               of the split (60 train / 5 val), so AV_CRITICAL's "Warning! Stop
+               and proceed carefully" path is ACTIVE again — but 5 val boxes is
+               far below the 30-box noise floor: treat its AP as direction, not
+               a result, until more descending views are annotated.
   pole         no boxes in the walkthrough footage or Open Images.
   sign_*       pictogram signs; they exist only in our own frames and need
                the Roboflow annotation pass.

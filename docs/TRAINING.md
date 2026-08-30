@@ -50,7 +50,7 @@ is enough. The steps below are the mechanics.
    | 3 | door | 10 | sign_exit (annotation-only) |
    | 4 | stairs_up | 11 | sign_lift (annotation-only) |
    | 5 | dustbin | 12 | sign_reception (annotation-only) |
-   | 6 | stairs_down (**critical**; trained since the 2026-08-30 re-tag) | 13 | sign_wheelchair (annotation-only) |
+   | 6 | stairs_down (**critical**; trained since the 2026-08-30 re-tag, human-verified) | 13 | sign_wheelchair (annotation-only) |
 
    **Annotation rules — follow strictly or mAP suffers:**
    * No generic "obstacle" class. It has no consistent appearance; annotators
