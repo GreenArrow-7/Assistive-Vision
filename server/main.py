@@ -377,13 +377,26 @@ def analyze(frame: UploadFile = File(...), keyword: str = Form(""),
         + symbols.symbols_from_texts(texts)
 
     kw = symbols.clean_query(keyword)
-    match = symbols.match_keyword(kw, texts, syms, objects) if kw else None
+    # search hazards too: a chair close enough to be a hazard is still the
+    # chair the user asked for. Passing only `objects` produced the
+    # self-contradicting "Caution. bicycle five steps on your right.
+    # bicycle not found in the current view." (field test 2026-09-08)
+    match = symbols.match_keyword(kw, texts, syms, close_hz + objects) if kw else None
 
-    # live mode: only CONFIRMED (2 consecutive frames) objects/hazards are
-    # spoken; everything is still returned for rendering
+    # live mode: alarms need corroboration, descriptions do not. An
+    # interrupting hazard is double-checked across two consecutive frames —
+    # UNLESS it is practically at the user's feet (<= 3 steps), where waiting
+    # another 2.6 s frame to re-confirm is the wrong trade. The environment
+    # summary carries no alarm, so unconfirmed objects stay in it: frames are
+    # 2.6 s apart while walking, boxes routinely shift past CONFIRM_IOU, and
+    # filtering the summary too starved live mode into near-silence
+    # (field-tested 2026-09-08).
     if mode == "live" and session:
-        speak_hz = _confirm(session + ":h", close_hz)
-        speak_obj = _confirm(session + ":o", objects)
+        confirmed = {id(h) for h in _confirm(session + ":h", close_hz)}
+        _confirm(session + ":o", objects)   # still sets confirmed flags for the UI
+        speak_hz = [h for h in close_hz
+                    if id(h) in confirmed or (h.get("steps") or 99) <= 3]
+        speak_obj = objects
     else:
         speak_hz, speak_obj = close_hz, objects
 

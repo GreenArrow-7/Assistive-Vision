@@ -72,6 +72,25 @@ def test_priority_keyword_found_message():
     assert out["speech"].count("washroom") == 1
 
 
+def test_priority_keyword_answer_uses_steps_when_known():
+    """'washroom is about five steps on your right' is the actionable answer;
+    the proximity wording above is only the fallback for items with no height
+    prior. Field feedback 2026-09-08 asked for the step form explicitly.
+    Counts are spelled out because a TTS engine reads words more naturally
+    than digits."""
+    m = {"label": "washroom", "box": box(120, 200), "kind": "symbol",
+         "direction": "on your right", "proximity": "nearby", "steps": 5}
+    out = priority.build_speech([], [], [], [m], keyword="washroom", match=m)
+    assert "washroom is about five steps on your right" in out["speech"], out["speech"]
+
+
+def test_priority_keyword_answer_singular_step():
+    m = {"label": "door", "box": box(120, 200), "kind": "object",
+         "direction": "straight ahead", "proximity": "very close", "steps": 1}
+    out = priority.build_speech([], [], [], [m], keyword="door", match=m)
+    assert "about one step straight ahead" in out["speech"], out["speech"]
+
+
 def test_priority_match_label_differs_from_keyword():
     m = {"label": "FIRE EXIT", "box": box(120, 200), "kind": "text",
          "direction": "on your right", "proximity": "nearby"}
@@ -380,3 +399,14 @@ def test_retired_targets_are_still_declared_for_the_migration_path():
     assert "washroom" in retired and retired["washroom"] == "sign_washroom"
     from server import classes_av as cav
     assert set(retired.values()) <= set(cav.AV_RETIRED)
+
+
+def test_keyword_matches_a_hazard_class_item():
+    """A chair close enough to be a hazard is still the chair the user asked
+    for. Searching only the object pool produced the self-contradicting
+    "Caution. bicycle ... bicycle not found in the current view."
+    (field test 2026-09-08)."""
+    from server import symbols as sym
+    haz = {"label": "bicycle", "box": box(120, 200), "kind": "hazard",
+           "direction": "on your right", "proximity": "nearby", "steps": 5}
+    assert sym.match_keyword("bicycle", [], [], [haz]) is haz
