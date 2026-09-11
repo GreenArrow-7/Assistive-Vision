@@ -160,6 +160,9 @@ CAMERA_HEIGHT_M = _number("CAMERA_HEIGHT", CAMERA_HEIGHT_M, .3, 2.5)
 CAMERA_VFOV_DEG = _number("CAMERA_VFOV", CAMERA_VFOV_DEG, 25, 90)
 MAX_ANNOUNCE = _number("MAX_ANNOUNCE", 3, 1, 6, True)
 TTS_RATE = _number("TTS_RATE", 1.05, .5, 2)
+# How long the client keeps the microphone closed AFTER its own TTS finishes,
+# so the echo tail of the utterance cannot be recognised as a user command.
+MIC_RESUME_DELAY_MS = _number("MIC_RESUME_DELAY_MS", 400, 0, 5000, True)
 LANGUAGE = os.getenv("LANGUAGE", "en-IN")
 # Only these classes can plausibly supply a floor contact point.
 GROUND_CLASSES = {"person", "chair", "table", "dining table", "door", "dustbin",

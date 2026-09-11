@@ -268,62 +268,20 @@ button:focus-visible,input:focus-visible,a:focus-visible{outline:4px solid #e8c3
 
 <canvas id="work" hidden></canvas>
 
-<script src="/workflow.js">
-function updateComponentStatus(d=null){
-  if(d)state.lastResult=d;else d=state.live?state.lastResult:null;
-  $('componentStatus').textContent='Camera: '+(video.srcObject?.getTracks().some(t=>t.readyState==='live')?'on':'off')+
-    '. Microphone: '+(state.recActive?'listening':state.cmd?'waiting':SR?'off':'unavailable')+
-    '. Detection: '+(d?.component_errors?.length?'partially unavailable':state.live?'scanning':'idle')+
-    '. OCR: '+(d?.ocr_active?'active':'idle')+'.';
-}
-async function selectMode(mode,query=''){
-  state.live=false;clearTimeout(state.liveTimer);activeRequest?.abort();announcements.clear();speechSynthesis.cancel();
-  workflow.transition(mode,query);const generation=workflow.generation;
-  SID=crypto.randomUUID?crypto.randomUUID():Math.random().toString(36).slice(2);
-  state.lastResult=null;
-  video.srcObject?.getTracks().forEach(t=>t.stop());video.srcObject=null;
-  $('modeChoices').hidden=mode!=='MAIN_MENU';$('queryForm').hidden=!['SEARCH','NAVIGATION'].includes(mode);
-  $('mapLink').hidden=true;$('queryInput').value=query;
-  const visual=['ENVIRONMENT','SEARCH'].includes(mode);$('stage').hidden=!visual;$('controls').hidden=!visual;
-  $('modeStatus').textContent={MAIN_MENU:'Choose assistance',ENVIRONMENT:'Environment Summary',SEARCH:'Keyword Search',NAVIGATION:'Navigation',STOPPED:'Assistance stopped'}[mode]||mode;
-  liveBtn.classList.remove('on');liveBtn.querySelector('span').textContent='Start live assist';
-  if(mode==='STOPPED'){state.cmd=false;pauseCmdRec();syncVoiceBtn();speak('Stopped. Camera and microphone are off.',{resumeCmd:false});updateComponentStatus();return;}
-  if(mode==='MAIN_MENU'){speak('Please select the assistance mode. Say one for environment summary, two for keyword search, or three for navigation.');document.querySelector('#modeChoices button')?.focus();updateComponentStatus();return;}
-  if(mode==='NAVIGATION'){$('queryLabel').textContent='Where would you like to go?';if(query)navigateTo(query);else {speak('Where would you like to go?');$('queryInput').focus();}updateComponentStatus();return;}
-  $('queryLabel').textContent='What would you like me to find?';
-  if(mode==='SEARCH'&&!query){speak('What would you like me to find?');$('queryInput').focus();updateComponentStatus();return;}
-  try{
-    await startCamera(generation);
-    if(generation!==workflow.generation)return;
-    state.live=true;liveBtn.classList.add('on');liveBtn.querySelector('span').textContent='Stop live assist';
-    speak(mode==='SEARCH'?'Searching for '+query:'Scanning your surroundings.');loop();
-  }catch(e){if(generation!==workflow.generation)return;speak('Camera permission is required for visual assistance. Use HTTPS and allow camera access in browser settings, then choose the mode again.');}
-  updateComponentStatus();
-}
-function enqueueSpeech(text,priority){
-  if(announcements.push(text,priority)&&priority<=1){speechSynthesis.cancel();drainSpeech();}
-}
-function drainSpeech(){
-  if(speechSynthesis.speaking)return;
-  const next=announcements.take();if(next&&$('transcript'))speak(next.text,{interrupt:false});
-}
-setInterval(drainSpeech,300);
-setInterval(()=>{if($('componentStatus'))updateComponentStatus();},1500);
-document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>selectMode(b.dataset.mode));
-$('menuBtn').onclick=()=>selectMode('MAIN_MENU');$('stopAll').onclick=()=>selectMode('STOPPED');
-$('queryForm').onsubmit=e=>{e.preventDefault();const query=$('queryInput').value.trim();if(query)selectMode(workflow.mode,query);};
-document.addEventListener('visibilitychange',()=>{if(document.hidden&&state.live)selectMode('STOPPED');});
-window.addEventListener('pagehide',()=>{activeRequest?.abort();video.srcObject?.getTracks().forEach(t=>t.stop());pauseCmdRec();});
-</script>
+<script src="/workflow.js"></script>
 <script>
 'use strict';
 const API=location.origin;
 const speechSynthesis=window.speechSynthesis||{speaking:false,cancel(){},resume(){},getVoices(){return []},speak(){}};
 const workflow=new AssistiveWorkflow.Workflow();
 const announcements=new AssistiveWorkflow.AnnouncementQueue();
-let options={frame_interval:2600,announcement_cooldown:9000,tts_rate:1.05,language:'en-IN'};
+let options={frame_interval:2600,announcement_cooldown:9000,tts_rate:1.05,language:'en-IN',mic_resume_delay:400};
 let activeRequest=null;
-fetch('/api/config').then(r=>r.json()).then(c=>{options=c;announcements.cooldown=c.announcement_cooldown;}).catch(()=>{});
+// Mic quiet window: no recognition result is trusted while our own TTS is
+// audible, nor for a short configurable cooldown after it ends (echo tail).
+let micQuietUntil=0;
+const micQuiet=()=>speechSynthesis.speaking||Date.now()<micQuietUntil;
+fetch('/api/config').then(r=>r.json()).then(c=>{options={mic_resume_delay:400,...c};announcements.cooldown=c.announcement_cooldown;}).catch(()=>{});
 
 let SID=Math.random().toString(36).slice(2,10);
 let VFOV=parseFloat((()=>{try{return localStorage.getItem('av_vfov')}catch(e){return null}})())||0;
@@ -362,7 +320,7 @@ function pickVoice(){
 pickVoice();
 if('onvoiceschanged' in speechSynthesis)speechSynthesis.onvoiceschanged=pickVoice;
 
-function speak(text,{interrupt=true,liveDedupe=false,resumeCmd=true,then=null}={}){
+function speak(text,{interrupt=true,liveDedupe=false,resumeCmd=true,then=null,onstart=null}={}){
   if(!text){if(then)then();return;}
   if($('transcript'))$('transcript').textContent=text;state.lastSpeech=text;
   if(state.muted||!window.speechSynthesis){if(then)then();return;}
@@ -375,17 +333,20 @@ function speak(text,{interrupt=true,liveDedupe=false,resumeCmd=true,then=null}={
   state.lastSpeech=text;
   let followed=false;
   const follow=()=>{if(then&&!followed){followed=true;then();}};
+  const quiet=()=>{micQuietUntil=Date.now()+(options.mic_resume_delay||400);};
   try{
     if(interrupt)speechSynthesis.cancel();
     pauseCmdRec();                       // mic off while we talk (no self-echo)
+    micQuietUntil=Number.MAX_SAFE_INTEGER;   // closed until the utterance ends
     const u=new SpeechSynthesisUtterance(text);
     u.rate=options.tts_rate;u.lang=options.language;
     if(femaleVoice){u.voice=femaleVoice;u.lang=femaleVoice.lang;}
-    u.onend=()=>{if(resumeCmd)resumeCmdRec();follow();};
-    u.onerror=()=>{if(resumeCmd)resumeCmdRec();follow();};
+    if(onstart)u.onstart=onstart;
+    u.onend=()=>{quiet();if(resumeCmd)resumeCmdRec();follow();};
+    u.onerror=()=>{quiet();if(resumeCmd)resumeCmdRec();follow();};
     speechSynthesis.speak(u);
-    setTimeout(follow,12000);            // safety: never strand a follow-up
-  }catch(e){resumeCmdRec();follow();}
+    setTimeout(()=>{quiet();follow();},12000); // safety: never strand a follow-up
+  }catch(e){quiet();resumeCmdRec();follow();}
 }
 
 /* ---------- continuous voice COMMAND engine ---------- */
@@ -398,6 +359,7 @@ function startCmdRec(){
     cmdRec=new SR();
     cmdRec.lang='en-IN';cmdRec.continuous=true;cmdRec.interimResults=false;
     cmdRec.onresult=e=>{
+      if(micQuiet())return;              // never act on our own TTS or its echo tail
       const q=e.results[e.results.length-1][0].transcript.toLowerCase().trim();
       if(q)handleCommand(q);
     };
@@ -431,14 +393,20 @@ function syncVoiceBtn(){
 /* ---------- command router ---------- */
 function handleCommand(q){
   const command=workflow.command(q);
-  if(command){if(command[0]==='REPEAT'){speak(state.lastSpeech);return;}selectMode(...command);return;}
+  if(command){
+    if(command[0]==='REPEAT'){speak(state.lastSpeech);return;}
+    if(command[0]==='DISTANCE_TIME'){distanceAndTime();return;}
+    selectMode(...command);return;}
 
   buzz(35);setStatus('“'+q+'”','busy');
   if(/\b(start|begin|resume)\b.*\b(scan|scanning|live|assist)\b/.test(q)||/^start$/.test(q)){
-    if(!state.live)toggleLive();else speak('Live assist is already on.');return;}
+    // selectMode owns the camera; toggleLive() alone starts a loop with no
+    // camera and every frame fails ("start scanning" root cause)
+    if(!state.live)selectMode('ENVIRONMENT');else speak('Live assist is already on.');return;}
   if(/\b(stop|pause|end)\b.*\b(scan|scanning|live|assist)\b/.test(q)||/^stop$/.test(q)){
-    if(state.live)toggleLive();else{speechSynthesis.cancel();speak('Stopped.');}return;}
+    if(state.live)selectMode('STOPPED');else{speechSynthesis.cancel();speak('Stopped.');}return;}
   if(/\b(describe|summarize|summary|surroundings|around me|what.*see)\b/.test(q)){analyze('');return;}
+  if(/\b(distance and time|travel time|how long will it take|how far is it)\b/.test(q)){distanceAndTime();return;}
   if(/\b(navigate|directions|take me|guide me)\b/.test(q)){
     const m=q.match(/\bto\s+(.+)$/);
     if(m)navigateTo(m[1].trim());else{speak('Where should I navigate to? Say, navigate to, followed by the place.');}
@@ -495,7 +463,9 @@ async function pollHealth(){
         setStatus('Ready · v'+(h.version||'?')+(h.text_obb?' · OBB':''),'ok');
         updateComponentStatus();
         if(autoLiveWanted&&!state.live){autoLiveWanted=false;
-          speak('All systems ready.',{then:()=>{if(!state.live)toggleLive();}});}
+          // selectMode starts the camera before the loop; toggleLive() alone
+          // scanned with no camera and failed every frame (voice-start bug)
+          speak('All systems ready.',{then:()=>{if(!state.live)selectMode('ENVIRONMENT');}});}
         else speak('All systems ready. Say start scanning, or a command like find washroom.');}
       clearInterval(state.healthTimer);
     }else{
@@ -619,8 +589,14 @@ document.addEventListener('visibilitychange',()=>{ // save battery / mic when ba
 });
 
 /* ---------- outdoor navigation ---------- */
+function distanceAndTime(){
+  // "Distance and time" reuses the destination the user already gave.
+  if(state.lastDest)navigateTo(state.lastDest);
+  else speak('No destination is set yet. Say navigate to, followed by the place, first.');
+}
 async function navigateTo(dest){
   if(!dest)return;
+  state.lastDest=dest;                   // remembered for "distance and time"
   const generation=workflow.generation;
   speak('Getting your location.');
   let coords={};
@@ -662,7 +638,13 @@ async function navigateTo(dest){
     }catch(e){}
   }
   $('mapLink').href=route.maps_url;$('mapLink').hidden=false;
-  speak((coords.latitude===undefined?'Location unavailable. ':'')+route.speech);$('mapLink').focus();
+  // Actually hand off to Google Maps. Pop-up blockers may refuse a
+  // non-gesture open; the focused link is the accessible fallback either way.
+  let opened=null;
+  try{opened=window.open(route.maps_url,'_blank','noopener');}catch(e){}
+  speak((coords.latitude===undefined?'Location unavailable. ':'')+route.speech
+        +(opened?'':' The Google Maps link is on screen. Tap it to open directions.'));
+  $('mapLink').focus();
 }
 function openNav(prefill=''){
   $('navSheet').classList.add('open');
@@ -745,6 +727,8 @@ function armGate(){
   if(SR){try{
     gateRec=new SR();gateRec.lang='en-IN';gateRec.continuous=true;gateRec.interimResults=false;
     gateRec.onresult=e=>{
+      // The welcome prompt itself says "start" — never act on our own TTS.
+      if(micQuiet())return;
       const q=e.results[e.results.length-1][0].transcript.toLowerCase();
       // voice start = the user asked for scanning, not just the app shell:
       // begin live assist as soon as the server reports ready
@@ -766,8 +750,11 @@ let welcomed=false;
 function primeTTS(){ // iOS: first synthesis must be primed inside a gesture
   try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u);speechSynthesis.resume();}catch(e){}
 }
-function sayWelcome(){if(welcomed)return;welcomed=true;primeTTS();
-  setTimeout(()=>speak(WELCOME,{resumeCmd:false}),120);}
+function sayWelcome(){if(welcomed)return;primeTTS();
+  // Mark welcomed only when the utterance actually STARTS: the load-time
+  // attempt is silently blocked by mobile autoplay policy, and burning the
+  // guard there meant the first tap never spoke the welcome at all.
+  setTimeout(()=>speak(WELCOME,{resumeCmd:false,onstart:()=>{welcomed=true;}}),120);}
 async function startApp(){
   gateArmed=false;try{gateRec&&gateRec.abort();}catch(_){}
   $('gate')?.remove();$('app').style.visibility='visible';state.cmd=!!SR;syncVoiceBtn();
@@ -779,9 +766,10 @@ $('startBtn').onclick=startApp;
 function updateComponentStatus(d=null){
   if(d)state.lastResult=d;else d=state.live?state.lastResult:null;
   $('componentStatus').textContent='Camera: '+(video.srcObject?.getTracks().some(t=>t.readyState==='live')?'on':'off')+
-    '. Microphone: '+(state.recActive?'listening':state.cmd?'waiting':SR?'off':'unavailable')+
+    '. Microphone: '+(speechSynthesis.speaking?'paused during speech':state.recActive?'listening':state.cmd?'waiting':SR?'off':'unavailable')+
     '. Detection: '+(d?.component_errors?.length?'partially unavailable':state.live?'scanning':'idle')+
-    '. OCR: '+(d?.ocr_active?'active':'idle')+'.';
+    '. OCR: '+(d?.ocr_active?'active':'idle')+
+    '. Voice: '+(speechSynthesis.speaking?'speaking':'quiet')+'.';
 }
 async function selectMode(mode,query=''){
   state.live=false;clearTimeout(state.liveTimer);activeRequest?.abort();announcements.clear();speechSynthesis.cancel();

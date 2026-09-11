@@ -477,7 +477,8 @@ def analyze(frame: UploadFile = File(...), keyword: str = Form("", max_length=20
 def client_config():
     return {"frame_interval": config.FRAME_INTERVAL,
             "announcement_cooldown": config.ANNOUNCEMENT_COOLDOWN * 1000,
-            "tts_rate": config.TTS_RATE, "language": config.LANGUAGE}
+            "tts_rate": config.TTS_RATE, "language": config.LANGUAGE,
+            "mic_resume_delay": config.MIC_RESUME_DELAY_MS}
 
 @app.post("/api/navigation")
 def navigate(request: NavigationRequest):

@@ -14,11 +14,14 @@
       if (/^(back|main menu|menu)$/.test(q)) return ['MAIN_MENU'];
       if (/^(repeat|say that again)$/.test(q)) return ['REPEAT'];
       if (/^(start|begin|let's start)$/.test(q)) return ['MAIN_MENU'];
-      if (/^(one|1|environment|environment summary|summary|start scanning|scan)$/.test(q)) return ['ENVIRONMENT'];
+      if (/^(one|1|environment|environment summary|summary|start scanning|start scan|begin scanning|scan)$/.test(q)) return ['ENVIRONMENT'];
       if (/^(two|2|search|keyword search)$/.test(q)) return ['SEARCH'];
       if (/^(three|3|navigation|navigate)$/.test(q)) return ['NAVIGATION'];
+      // Route-info intent must outrank the NAVIGATION passthrough below, or
+      // "distance and time" becomes a destination named "distance and time".
+      if (/^(distance and time|travel time|how far is it|how long will it take)$/.test(q)) return ['DISTANCE_TIME'];
       if (/^(find|locate|search for)\s+/.test(q)) return ['SEARCH', q.replace(/^(find|locate|search for)\s+/, '')];
-      if (/^(go to|navigate to)\s+/.test(q)) return ['NAVIGATION', q.replace(/^(go to|navigate to)\s+/, '')];
+      if (/^(go to|navigate to|take me to)\s+/.test(q)) return ['NAVIGATION', q.replace(/^(go to|navigate to|take me to)\s+/, '')];
       if (this.mode === 'SEARCH' || this.mode === 'NAVIGATION') return [this.mode, q];
       return null;
     }
