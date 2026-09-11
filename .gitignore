@@ -17,9 +17,11 @@ datasets/
 runs/
 cloudflared.exe
 datasets/annotate_upload/
+.playwright-mcp/
 
 .env
 certs/
 .pytest-tmp*/
 web/check.cjs
 pytest-cache-files-*/
+node_modules/

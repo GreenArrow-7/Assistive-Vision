@@ -187,7 +187,7 @@ button:focus-visible,input:focus-visible,a:focus-visible{outline:4px solid #e8c3
     <span>Symbols</span><span>Voice commands</span><span>GPS navigation</span>
   </div>
   <button id="startBtn">▶&nbsp; START</button>
-  <p id="gateHint" style="font-size:13px;color:var(--dim)">Tap <b style="color:var(--ink)">anywhere</b> to hear instructions, then say <b style="color:var(--ink)">“Start”</b> — or just press START.</p>
+  <p id="gateHint" style="font-size:13px;color:var(--dim)">Voice-first: tap <b style="color:var(--ink)">once anywhere</b> to switch the microphone on, then say <b style="color:var(--ink)">“Start Scanning”</b> — scanning begins by itself. Or simply press START.</p>
   <p style="font-size:12px;color:var(--dim)">After start, everything is voice-controlled — say <b style="color:var(--ink)">Help</b> anytime.</p>
   <div class="foot">YOLO + EasyOCR pipeline · Priority voice guidance<br>Dept. of CSE, ATMECE Mysuru · 2025–26</div>
 </div>
@@ -362,10 +362,10 @@ function pickVoice(){
 pickVoice();
 if('onvoiceschanged' in speechSynthesis)speechSynthesis.onvoiceschanged=pickVoice;
 
-function speak(text,{interrupt=true,liveDedupe=false,resumeCmd=true}={}){
-  if(!text)return;
+function speak(text,{interrupt=true,liveDedupe=false,resumeCmd=true,then=null}={}){
+  if(!text){if(then)then();return;}
   if($('transcript'))$('transcript').textContent=text;state.lastSpeech=text;
-  if(state.muted||!window.speechSynthesis)return;
+  if(state.muted||!window.speechSynthesis){if(then)then();return;}
   if(liveDedupe){
     const now=Date.now();
     if(text===state.lastSpokenLive&&now-state.lastSpokenLiveAt<9000)return;
@@ -373,16 +373,19 @@ function speak(text,{interrupt=true,liveDedupe=false,resumeCmd=true}={}){
     state.lastSpokenLive=text;state.lastSpokenLiveAt=now;
   }
   state.lastSpeech=text;
+  let followed=false;
+  const follow=()=>{if(then&&!followed){followed=true;then();}};
   try{
     if(interrupt)speechSynthesis.cancel();
     pauseCmdRec();                       // mic off while we talk (no self-echo)
     const u=new SpeechSynthesisUtterance(text);
     u.rate=options.tts_rate;u.lang=options.language;
     if(femaleVoice){u.voice=femaleVoice;u.lang=femaleVoice.lang;}
-    u.onend=()=>{if(resumeCmd)resumeCmdRec();};
-    u.onerror=()=>{if(resumeCmd)resumeCmdRec();};
+    u.onend=()=>{if(resumeCmd)resumeCmdRec();follow();};
+    u.onerror=()=>{if(resumeCmd)resumeCmdRec();follow();};
     speechSynthesis.speak(u);
-  }catch(e){resumeCmdRec();}
+    setTimeout(follow,12000);            // safety: never strand a follow-up
+  }catch(e){resumeCmdRec();follow();}
 }
 
 /* ---------- continuous voice COMMAND engine ---------- */
@@ -490,7 +493,10 @@ async function pollHealth(){
     if(h.ready){
       if(!state.ready){state.ready=true;warmupEl.classList.remove('show');
         setStatus('Ready · v'+(h.version||'?')+(h.text_obb?' · OBB':''),'ok');
-        updateComponentStatus();}
+        updateComponentStatus();
+        if(autoLiveWanted&&!state.live){autoLiveWanted=false;
+          speak('All systems ready.',{then:()=>{if(!state.live)toggleLive();}});}
+        else speak('All systems ready. Say start scanning, or a command like find washroom.');}
       clearInterval(state.healthTimer);
     }else{
       warmupEl.classList.add('show');setStatus('Loading AI models…','busy');
@@ -597,7 +603,8 @@ function toggleLive(){
   state.live=!state.live;
   liveBtn.classList.toggle('on',state.live);
   liveBtn.querySelector('span').textContent=state.live?'⏹ STOP LIVE ASSIST':'👁 START LIVE ASSIST';
-  if(state.live){speak('Live assist on.');loop();}
+  if(state.live){setStatus('LIVE · scanning every 2.6 s','busy');
+    speak('Live assist on. Scanning.');loop();}
   else{clearTimeout(state.liveTimer);speechSynthesis.cancel();
     speak('Live assist off.');setStatus('Ready','ok');}
 }
@@ -629,6 +636,31 @@ async function navigateTo(dest){
   }catch(e){route={maps_url:'https://www.google.com/maps/dir/?api=1&travelmode=walking&destination='+encodeURIComponent(dest),
       speech:'Route distance and travel time are unavailable locally. Open Google Maps for directions.'};}
   if(generation!==workflow.generation)return;
+  // The offline provider resolves no distance, but "how far and how long on
+  // foot" is the answer the user actually asked for. When the server could
+  // not supply it and we know where we are, estimate it here: geocode with
+  // OpenStreetMap, straight-line distance x1.3 for street routing, 4.5 km/h.
+  // Deliberately hedged ("roughly"/"about") - Maps still owns turn-by-turn.
+  if(route.distance_m==null&&coords.latitude!=null){
+    try{
+      const {latitude:la,longitude:lo}=coords;
+      const g=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1'
+          +`&q=${encodeURIComponent(dest)}&viewbox=${lo-0.25},${la+0.25},${lo+0.25},${la-0.25}`,
+        {signal:AbortSignal.timeout(6000)}).then(r=>r.json());
+      if(generation!==workflow.generation)return;
+      if(g&&g[0]){
+        const toR=x=>x*Math.PI/180,gla=parseFloat(g[0].lat),glo=parseFloat(g[0].lon);
+        const a=Math.sin(toR(gla-la)/2)**2
+               +Math.cos(toR(la))*Math.cos(toR(gla))*Math.sin(toR(glo-lo)/2)**2;
+        const km=2*6371*Math.asin(Math.sqrt(a))*1.3;
+        const mins=Math.max(1,Math.round(km/4.5*60));
+        const distTxt=km<1?(Math.max(50,Math.round(km*1000/50)*50)+' meters')
+                          :(km.toFixed(1)+' kilometers');
+        route.speech=`${dest} is roughly ${distTxt} away, about ${mins} minute${mins>1?'s':''} on foot. `
+                     +'Open Google Maps for walking directions.';
+      }
+    }catch(e){}
+  }
   $('mapLink').href=route.maps_url;$('mapLink').hidden=false;
   speak((coords.latitude===undefined?'Location unavailable. ':'')+route.speech);$('mapLink').focus();
 }
@@ -703,7 +735,7 @@ document.querySelectorAll('.chip[data-k]').forEach(c=>c.onclick=()=>{
 
 const WELCOME="Welcome to Assistive Vision System. Please say Start to continue.";
 window.addEventListener('load',()=>{sayWelcome();}); // routes through the `welcomed` guard so the greeting can't play twice
-let gateArmed=false,gateRec=null;
+let gateArmed=false,gateRec=null,autoLiveWanted=false;
 function armGate(){
   if(gateArmed)return;gateArmed=true;
   sayWelcome();
@@ -714,7 +746,13 @@ function armGate(){
     gateRec=new SR();gateRec.lang='en-IN';gateRec.continuous=true;gateRec.interimResults=false;
     gateRec.onresult=e=>{
       const q=e.results[e.results.length-1][0].transcript.toLowerCase();
-      if(/\b(start|begin)\b/.test(q)){try{gateRec.abort();}catch(_){};startApp();}
+      // voice start = the user asked for scanning, not just the app shell:
+      // begin live assist as soon as the server reports ready
+      if(/(start|begin)/.test(q)){autoLiveWanted=true;try{gateRec.abort();}catch(_){};startApp();}
+    };
+    gateRec.onerror=e=>{
+      if(e.error==='not-allowed'){gateArmed=false;
+        speak('Microphone is blocked, so voice start is unavailable. Please press the START button.',{resumeCmd:false});}
     };
     gateRec.onend=()=>{if(gateArmed&&document.getElementById('gate'))setTimeout(()=>{try{gateRec.start();}catch(_){}} ,300);};
     gateRec.start();

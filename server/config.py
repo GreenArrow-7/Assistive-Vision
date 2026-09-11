@@ -8,8 +8,12 @@ OCR_LANGS = ["en"]
 OCR_GPU = False                       # set True if CUDA available
 
 # ---------- Detection thresholds ----------
-OBJ_CONF = 0.45
-TEXT_CONF = 0.40                      # EasyOCR confidence 0-1
+OBJ_CONF = 0.35                       # 0.45 missed too much in the field test;
+                                      # per-class gates below still guard the
+                                      # classes that actually go noisy
+TEXT_CONF = 0.30                      # EasyOCR confidence 0-1. Lowered from
+                                      # 0.40: real signage at walking distance
+                                      # is small and often scored just under it
 MAX_ANNOUNCE = 6                      # cap items per spoken summary
 OCR_EVERY_N = 3                       # live mode: EasyOCR dominates CPU cost;
                                       # run it every Nth frame, reuse in between
@@ -27,13 +31,24 @@ HAZARD_CLASSES = {
     "potted plant", "dining table", "traffic light",
 }
 
-# COCO classes worth announcing as everyday objects (non-hazard)
+# COCO classes worth announcing as everyday objects (non-hazard).
+# Widened after the 2026-09-08 field test reported "not detecting objects":
+# the model was detecting them, but this allowlist dropped everything it did
+# not name, so ordinary indoor scenes (a desk with a keyboard and a monitor,
+# a shop counter, a waiting area) summarised to almost nothing. The list is
+# now most of COCO minus classes that are noise indoors (food items, sports
+# gear, animals other than pets) — recall matters more than tidiness here,
+# and MAX_ANNOUNCE still caps what is spoken.
 OBJECT_CLASSES = {
-    "person", "bicycle", "car", "motorcycle", "bus", "truck", "backpack",
-    "umbrella", "handbag", "suitcase", "bottle", "cup", "chair", "couch",
-    "bed", "dining table", "toilet", "tv", "laptop", "cell phone", "book",
-    "door", "bench", "potted plant", "sink", "refrigerator", "stop sign",
-    "traffic light", "fire hydrant", "dog", "cat", "train",
+    "person", "bicycle", "car", "motorcycle", "bus", "truck", "train",
+    "traffic light", "fire hydrant", "stop sign", "parking meter", "bench",
+    "backpack", "umbrella", "handbag", "tie", "suitcase",
+    "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl",
+    "chair", "couch", "potted plant", "bed", "dining table", "toilet",
+    "door", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone",
+    "microwave", "oven", "toaster", "sink", "refrigerator",
+    "book", "clock", "vase", "scissors", "teddy bear", "hair drier",
+    "toothbrush", "dog", "cat",
 }
 
 # ---------- Symbol recognition ----------
@@ -80,17 +95,40 @@ KNOWN_HEIGHTS = {
     "backpack": 0.50, "handbag": 0.30, "suitcase": 0.60, "umbrella": 0.80,
     "refrigerator": 1.70, "sink": 0.85, "book": 0.24, "cell phone": 0.15,
     "stop sign": 0.75, "traffic light": 0.90, "fire hydrant": 0.75,
+    # added with the widened OBJECT_CLASSES: without a height prior an object
+    # is announced with a vague proximity word instead of a step count, and
+    # "5 steps on your right" is the whole point of the spatial layer
+    "door": 2.00, "parking meter": 1.20, "microwave": 0.30, "oven": 0.85,
+    "toaster": 0.20, "clock": 0.30, "vase": 0.25, "teddy bear": 0.35,
+    "keyboard": 0.02, "mouse": 0.04, "remote": 0.17, "bowl": 0.08,
+    "wine glass": 0.20, "fork": 0.02, "knife": 0.03, "spoon": 0.02,
+    "scissors": 0.02, "hair drier": 0.22, "toothbrush": 0.02, "tie": 0.50,
 }
 
 # ---------- Accuracy hardening ----------
 CAMERA_HEIGHT_M = 1.45        # phone held at chest height (ground-plane model)
-BLUR_THRESHOLD = 55.0         # variance-of-Laplacian below this = too blurry
+BLUR_THRESHOLD = 40.0         # variance-of-Laplacian below this = too blurry.
+                              # 55 was tuned on stills; field test 2026-09-08
+                              # rejected too many ordinary walking frames.
 EDGE_MARGIN_PX = 6            # bbox within this of frame edge = truncated
 FEET_AREA_RATIO = 0.15        # bottom-touching + huge box => object at feet
 
-# Per-class confidence overrides (noisy classes need stricter gates)
+# Per-class confidence overrides (noisy classes need stricter gates).
+#
+# person was 0.62 and it was the single biggest cause of the 2026-09-08 field
+# report "not detecting objects": on the walkthrough frames YOLOv8n scores a
+# plainly visible person at 0.605, just under the gate, so the most common
+# indoor hazard was silently dropped and the summary came back empty. 0.62
+# was inherited from a still-image calibration; a person walking in a corridor
+# is motion-blurred and partially occluded, and scores lower for reasons that
+# have nothing to do with being a false positive.
+#
+# Missing a person is a safety failure; announcing one that is not there is an
+# annoyance. The gate is set accordingly, and the temporal confirmation in
+# main.py (two consecutive frames before an alarm) is what suppresses the
+# flicker that a looser gate would otherwise let through.
 CLASS_CONF = {
-    "person": 0.62, "bed": 0.60, "couch": 0.58, "dog": 0.55, "cat": 0.55,
+    "person": 0.40, "bed": 0.60, "couch": 0.58, "dog": 0.55, "cat": 0.55,
     "handbag": 0.55, "backpack": 0.55, "tv": 0.55,
 }
 

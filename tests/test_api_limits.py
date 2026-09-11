@@ -173,15 +173,18 @@ def test_session_table_survives_concurrent_writers():
     main._sessions.clear()
 
 
-# ---------- dormant critical alert is reported, not hidden (B2) ----------
-def test_health_reports_the_dormant_critical_alert():
-    """AV_CRITICAL names stairs_down, which is annotated but not trained, so
-    the interrupt-everything branch cannot fire. A hazard system that cannot
-    raise its top alert has to say so rather than let callers assume."""
+# ---------- critical alert state is reported, not hidden (B2) ----------
+def test_health_reports_the_critical_alert_state():
+    """stairs_down is trained in the schema (CRITICAL_ACTIVE), but this test
+    server runs the COCO fallback — weights that cannot emit the class — so
+    /health must still refuse to claim the alert. The schema half is live:
+    stairs_down is no longer in the dormant list, which keeps mirroring
+    DORMANT_HAZARDS rather than a copy."""
     from server import classes_av as cav
+    assert cav.CRITICAL_ACTIVE is True
     body = client.get("/health").json()
-    assert body["critical_alert"] is False
-    assert "stairs_down" in body["dormant_hazards"]
+    assert body["critical_alert"] is False      # COCO fallback loaded, no claim
+    assert "stairs_down" not in body["dormant_hazards"]
     assert body["dormant_hazards"] == sorted(cav.DORMANT_HAZARDS)
 
 

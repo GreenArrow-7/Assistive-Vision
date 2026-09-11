@@ -210,14 +210,15 @@ def health():
         "error": "Vision models unavailable. Check server logs." if _state["error"] else None,
         "object_model": Path(config.OBJECT_MODEL_CUSTOM if detector.active_schema() == detector.SCHEMA_AV else config.OBJECT_MODEL).name,
         # the schema the loaded model actually speaks, not which file was found:
-        # "av6" | "coco" | null (not loaded). A model whose classes match
+        # "av7" | "coco" | null (not loaded). A model whose classes match
         # neither is refused at warmup and surfaces here as an "error".
         "object_schema": detector.active_schema(),
         # Can the loaded model raise the interrupt-everything alert at all?
-        # AV_CRITICAL names stairs_down, which is annotated but not trained, so
-        # the "Warning! Stop and proceed carefully" branch is currently
-        # unreachable. A hazard system that cannot fire its top alert must say
-        # so out loud rather than leave the caller to assume it works.
+        # stairs_down is trained in the schema (CRITICAL_ACTIVE), but the
+        # "Warning! Stop and proceed carefully" branch is only reachable when
+        # the loaded weights actually speak that schema — a COCO fallback
+        # cannot emit the class, and /health must not claim an alert the
+        # running model cannot raise.
         "critical_alert": (detector.active_schema() == detector.SCHEMA_AV
                            and classes_av.CRITICAL_ACTIVE),
         "dormant_hazards": sorted(classes_av.DORMANT_HAZARDS),
@@ -419,15 +420,29 @@ def analyze(frame: UploadFile = File(...), keyword: str = Form("", max_length=20
         + symbols.symbols_from_texts(texts)
 
     kw = symbols.clean_query(keyword)
+    # NOTE: the keyword search below runs over `speak_obj + speak_hz`, so it
+    # searches hazards as well as objects. That is deliberate and load-bearing:
+    # searching only the object pool produced the self-contradicting "Caution.
+    # bicycle five steps on your right. bicycle not found in the current view."
+    # (field test 2026-09-08).
     speak_texts = texts
     if mode == "live" and session and run_ocr:
         speak_texts = _confirm(session + ":t", texts)
 
-    # live mode: only CONFIRMED (2 consecutive frames) objects/hazards are
-    # spoken; everything is still returned for rendering
+    # live mode: alarms need corroboration, descriptions do not. An
+    # interrupting hazard is double-checked across two consecutive frames —
+    # UNLESS it is practically at the user's feet (<= 3 steps), where waiting
+    # another 2.6 s frame to re-confirm is the wrong trade. The environment
+    # summary carries no alarm, so unconfirmed objects stay in it: frames are
+    # 2.6 s apart while walking, boxes routinely shift past CONFIRM_IOU, and
+    # filtering the summary too starved live mode into near-silence
+    # (field-tested 2026-09-08).
     if mode == "live" and session:
-        speak_hz = _confirm(session + ":h", close_hz)
-        speak_obj = _confirm(session + ":o", objects)
+        confirmed = {id(h) for h in _confirm(session + ":h", close_hz)}
+        _confirm(session + ":o", objects)   # still sets confirmed flags for the UI
+        speak_hz = [h for h in close_hz
+                    if id(h) in confirmed or (h.get("steps") or 99) <= 3]
+        speak_obj = objects
     else:
         speak_hz, speak_obj = close_hz, objects
 

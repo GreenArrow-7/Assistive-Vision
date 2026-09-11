@@ -1,4 +1,4 @@
-"""AV-6: the class schema the fine-tuned model is actually trained on.
+"""AV-7: the class schema the fine-tuned model is actually trained on.
 
 The schema id is DERIVED from this list (`SCHEMA_AV` in detector.py is
 `f"av{len(AV_CLASSES)}"`), so retiring or un-retiring a class cannot leave a
@@ -16,7 +16,7 @@ Design notes (defend these in the viva/paper):
     signs is unaffected: `text_pipeline.detect_text` runs OCR over the WHOLE
     frame and never consults a detected class.
 
-WHY 6 AND NOT 14. The schema was designed with 14 classes. Eight have too few
+WHY 7 AND NOT 14. The schema was designed with 14 classes. Seven have too few
 annotated boxes to learn, and a declared-but-unlearnable class is not free: the
 model carries an output head that can never fire, reports 0 AP, and drags macro
 mAP down — while `detector.detect_schema` still certifies the weights as ours,
@@ -24,16 +24,22 @@ because it matches on class NAMES. A model that claims a class it cannot
 detect is exactly the silent-capability gap this codebase exists to prevent.
 So the schema states only what the weights can actually do.
 
-The eight omitted classes are not abandoned — the vocabulary is data-driven,
+The seven omitted classes are not abandoned — the vocabulary is data-driven,
 so annotating them and adding the name back here restores them. Their heights,
 spoken names, hazard roles and keyword routes are all still defined below,
 precisely so that re-adding a class is a one-line change.
 
-  stairs_down  the critical class; needs top-of-staircase footage, which no
-               public dataset supplies (Open Images photographs staircases
-               from the bottom looking up). AV_CRITICAL still names it, so
-               the "Warning! Stop and proceed carefully" path reactivates the
-               moment the class is trained. Until then that path is DORMANT.
+  stairs_down  UN-RETIRED 2026-08-30: the 579 Open Images "Stairs" boxes were
+               re-tagged via a model-proposed, HUMAN-VERIFIED pass. A vision-
+               model sweep proposed 119 descending; a human then reviewed every
+               proposed descending box in the review queue (the audit record is
+               datasets/oi_av14/stairs_verify.csv) and confirmed 65, demoted 53
+               to stairs_up, dropped 1. Final: 65 descending / 425 ascending /
+               89 dropped. The critical class has verified boxes on both sides
+               of the split (60 train / 5 val), so AV_CRITICAL's "Warning! Stop
+               and proceed carefully" path is ACTIVE again — but 5 val boxes is
+               far below the 30-box noise floor: treat its AP as direction, not
+               a result, until more descending views are annotated.
   pole         no boxes in the walkthrough footage or Open Images.
   sign_*       pictogram signs; they exist only in our own frames and need
                the Roboflow annotation pass.
@@ -51,15 +57,17 @@ precisely so that re-adding a class is a one-line change.
 # removing a class shifts every index above it (dustbin 7 -> 5), so label files
 # written against the 14-class list MUST be reindexed, never reused as-is.
 #
-# signboard leads this list on purpose: retiring it that way leaves every
-# AV_ALL_CLASSES index exactly where it was, so no label file written against
-# the annotation vocabulary changes meaning.
+# Un-retiring stairs_down (2026-08-30) swapped AV_ALL_CLASSES indices 6 and 7
+# (signboard <-> stairs_down). That is safe for every dataset on disk because
+# each carries its own classes.txt and reindex_labels maps by NAME from that
+# file — but it means AV_ALL_CLASSES indices must never be assumed stable
+# across schema changes.
 AV_RETIRED = [
-    "signboard", "stairs_down", "pole", "sign_washroom", "sign_exit",
+    "signboard", "pole", "sign_washroom", "sign_exit",
     "sign_lift", "sign_reception", "sign_wheelchair",
 ]
 
-# --- 6 classes, index order MUST match data.yaml used for training ---
+# --- 7 classes, index order MUST match data.yaml used for training ---
 AV_CLASSES = [
     "person",          # 0
     "chair",           # 1
@@ -67,6 +75,7 @@ AV_CLASSES = [
     "door",            # 3
     "stairs_up",       # 4
     "dustbin",         # 5
+    "stairs_down",     # 6  the critical class — see AV_CRITICAL
 ]
 
 # What a HUMAN may annotate. Training narrows this to AV_CLASSES via
@@ -169,7 +178,7 @@ DORMANT_HAZARDS = (AV_HAZARDS | AV_CRITICAL) - set(AV_CLASSES)
 CRITICAL_ACTIVE = bool(AV_CRITICAL & set(AV_CLASSES))
 
 
-def data_yaml(path: str = "../datasets/av6") -> str:
+def data_yaml(path: str = "../datasets/av7") -> str:
     names = "\n".join(f"  {i}: {c}" for i, c in enumerate(AV_CLASSES))
     return (f"path: {path}\ntrain: train/images\nval: valid/images\n"
             f"test: test/images\n\nnames:\n{names}\n")

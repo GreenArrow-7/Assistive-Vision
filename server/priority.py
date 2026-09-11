@@ -43,16 +43,28 @@ def build_speech(hazards, objects, texts, symbols, keyword=None, match=None) -> 
     if hz:
         parts.append("Caution. " + ". ".join(_fmt(h) for h in hz) + ".")
 
-    # 2 — keyword result
+    # 2 — keyword result. Steps are the actionable unit ("washroom is about
+    # 5 steps on your right"); proximity words are the fallback when no
+    # height prior exists for the matched item.
     if keyword:
         if match:
-            prox = match.get("proximity", "")
-            prox = f", {prox}" if prox else ""
+            steps = match.get("steps")
+            d = match.get("direction", "ahead")
+            if steps and steps <= config.MAX_STEPS_ANNOUNCE:
+                from .spatial import steps_phrase
+                where = (f"about {steps_phrase(steps)} "
+                         f"step{'s' if steps != 1 else ''} {d}")
+            elif steps:
+                where = f"far away {d}"
+            else:
+                prox = match.get("proximity", "")
+                prox = f", {prox}" if prox else ""
+                where = f"{d}{prox}"
             label = str(match.get("label", keyword))
             if label.lower().strip() == keyword.lower().strip():
-                parts.append(f"{keyword} is {match['direction']}{prox}.")
+                parts.append(f"{keyword} is {where}.")
             else:
-                parts.append(f"{keyword} found: {label} is {match['direction']}{prox}.")
+                parts.append(f"{keyword} found: {label} is {where}.")
         else:
             parts.append(f"{keyword} not found in the current view.")
 
