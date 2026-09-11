@@ -452,8 +452,9 @@ def analyze(frame: UploadFile = File(...), keyword: str = Form("", max_length=20
     speech_priority = 0 if out["speech"].startswith("Warning!") else (1 if out["hazard_count"] else 2 if match else 3)
     if component_errors:
         out["speech"] = " ".join(component_errors) + " " + out["speech"]
-    logger.info("frame_analyzed ms=%d objects=%d texts=%d errors=%d",
-                (time.time()-t0)*1000, len(objects)+len(close_hz), len(texts), len(component_errors))
+    logger.info("frame_analyzed ms=%d objects=%d texts=%d errors=%d kw=%r match=%s",
+                (time.time()-t0)*1000, len(objects)+len(close_hz), len(texts),
+                len(component_errors), kw, match["label"] if match else None)
 
     return {
         "speech": out["speech"],

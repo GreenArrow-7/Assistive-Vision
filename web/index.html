@@ -280,7 +280,18 @@ let activeRequest=null;
 // Mic quiet window: no recognition result is trusted while our own TTS is
 // audible, nor for a short configurable cooldown after it ends (echo tail).
 let micQuietUntil=0;
-const micQuiet=()=>speechSynthesis.speaking||Date.now()<micQuietUntil;
+// ttsActive is OUR flag around each utterance. Chrome (esp. Android) can leave
+// speechSynthesis.speaking wedged at true after cancel(), and trusting it made
+// the app permanently deaf: every recognition result dropped forever.
+let ttsActive=false;
+const micQuiet=()=>ttsActive||Date.now()<micQuietUntil;
+// Stage-tagged debug log: add ?debug=1 to the URL (or localStorage av_debug=1),
+// then watch the console via chrome://inspect on a phone.
+const DBG=/[?&]debug=1/.test(location.search)||(()=>{try{return localStorage.getItem('av_debug')==='1'}catch(e){return false}})();
+const dbg=(...a)=>{if(DBG)console.log('[AV '+new Date().toISOString().slice(11,23)+']',...a);};
+// Watchdog: a zombie utterance can leave the engine "speaking" forever, which
+// also starves the announcement queue. If WE are not speaking, clear it.
+setInterval(()=>{if(!ttsActive&&speechSynthesis.speaking){dbg('TTS watchdog: cancelling wedged synthesis');try{speechSynthesis.cancel();}catch(e){}}},5000);
 fetch('/api/config').then(r=>r.json()).then(c=>{options={mic_resume_delay:400,...c};announcements.cooldown=c.announcement_cooldown;}).catch(()=>{});
 
 let SID=Math.random().toString(36).slice(2,10);
@@ -323,7 +334,9 @@ if('onvoiceschanged' in speechSynthesis)speechSynthesis.onvoiceschanged=pickVoic
 function speak(text,{interrupt=true,liveDedupe=false,resumeCmd=true,then=null,onstart=null}={}){
   if(!text){if(then)then();return;}
   if($('transcript'))$('transcript').textContent=text;state.lastSpeech=text;
-  if(state.muted||!window.speechSynthesis){if(then)then();return;}
+  // Muted / no TTS engine: the mic must still run — recognition's lifecycle
+  // cannot be owned solely by TTS callbacks that will never fire.
+  if(state.muted||!window.speechSynthesis){if(resumeCmd)resumeCmdRec();if(then)then();return;}
   if(liveDedupe){
     const now=Date.now();
     if(text===state.lastSpokenLive&&now-state.lastSpokenLiveAt<9000)return;
@@ -333,20 +346,23 @@ function speak(text,{interrupt=true,liveDedupe=false,resumeCmd=true,then=null,on
   state.lastSpeech=text;
   let followed=false;
   const follow=()=>{if(then&&!followed){followed=true;then();}};
-  const quiet=()=>{micQuietUntil=Date.now()+(options.mic_resume_delay||400);};
+  const quiet=()=>{ttsActive=false;micQuietUntil=Date.now()+(options.mic_resume_delay||400);};
   try{
     if(interrupt)speechSynthesis.cancel();
     pauseCmdRec();                       // mic off while we talk (no self-echo)
-    micQuietUntil=Number.MAX_SAFE_INTEGER;   // closed until the utterance ends
+    ttsActive=true;                      // closed until the utterance ends
+    dbg('TTS start:',text.slice(0,60));
     const u=new SpeechSynthesisUtterance(text);
     u.rate=options.tts_rate;u.lang=options.language;
     if(femaleVoice){u.voice=femaleVoice;u.lang=femaleVoice.lang;}
     if(onstart)u.onstart=onstart;
-    u.onend=()=>{quiet();if(resumeCmd)resumeCmdRec();follow();};
-    u.onerror=()=>{quiet();if(resumeCmd)resumeCmdRec();follow();};
+    u.onend=()=>{dbg('TTS end');quiet();if(resumeCmd)resumeCmdRec();follow();};
+    u.onerror=ev=>{dbg('TTS error:',ev.error||ev);quiet();if(resumeCmd)resumeCmdRec();follow();};
     speechSynthesis.speak(u);
-    setTimeout(()=>{quiet();follow();},12000); // safety: never strand a follow-up
-  }catch(e){quiet();resumeCmdRec();follow();}
+    // Safety: Chrome sometimes fires NEITHER onend NOR onerror. Without a
+    // resume here the mic stayed paused until page reload.
+    setTimeout(()=>{if(ttsActive)dbg('TTS 12s safety fired');quiet();if(resumeCmd)resumeCmdRec();follow();},12000);
+  }catch(e){dbg('TTS threw:',e);quiet();resumeCmdRec();follow();}
 }
 
 /* ---------- continuous voice COMMAND engine ---------- */
@@ -359,11 +375,13 @@ function startCmdRec(){
     cmdRec=new SR();
     cmdRec.lang='en-IN';cmdRec.continuous=true;cmdRec.interimResults=false;
     cmdRec.onresult=e=>{
-      if(micQuiet())return;              // never act on our own TTS or its echo tail
       const q=e.results[e.results.length-1][0].transcript.toLowerCase().trim();
+      if(micQuiet()){dbg('REC dropped (TTS quiet window):',q);return;}
+      dbg('REC heard:',q);
       if(q)handleCommand(q);
     };
     cmdRec.onerror=e=>{
+      dbg('REC error:',e.error);
       state.recActive=false;
       if(['not-allowed','service-not-allowed','audio-capture'].includes(e.error)){state.cmd=false;syncVoiceBtn();
         setStatus('Mic blocked','err');
@@ -393,6 +411,7 @@ function syncVoiceBtn(){
 /* ---------- command router ---------- */
 function handleCommand(q){
   const command=workflow.command(q);
+  dbg('CMD parsed:',JSON.stringify(command),'for:',q);
   if(command){
     if(command[0]==='REPEAT'){speak(state.lastSpeech);return;}
     if(command[0]==='DISTANCE_TIME'){distanceAndTime();return;}
@@ -438,6 +457,7 @@ async function startCamera(generation=workflow.generation){
   video.srcObject=stream;
   await new Promise(r=>video.onloadedmetadata=r);
   await video.play();
+  dbg('CAMERA started',video.videoWidth+'x'+video.videoHeight);
 }
 function grabBlob(){
   return new Promise((res,rej)=>{
@@ -479,7 +499,8 @@ async function pollHealth(){
 /* ---------- analyze ---------- */
 async function analyze(keyword=''){
   const generation=workflow.generation;
-  if(state.busy)return;
+  if(state.busy){dbg('ANALYZE skipped: previous frame still in flight');return;}
+  dbg('ANALYZE send: mode='+(state.live?'live':'single'),'kw='+JSON.stringify(keyword));
   if(!state.ready){speak('The server is still loading its AI models. Please wait.');return;}
   state.busy=true;
   if(!state.live)setStatus('Analyzing…','busy');
@@ -498,8 +519,11 @@ async function analyze(keyword=''){
     try{r=await fetch(API+'/analyze',{method:'POST',body:fd,signal:activeRequest.signal});}
     finally{clearTimeout(timeout);}     // hung request can't lock the app
     const d=await r.json();
-    if(generation!==workflow.generation)return;
+    if(generation!==workflow.generation){dbg('ANALYZE stale result ignored');return;}
     if(!r.ok)throw new Error(d.error||('HTTP '+r.status));
+    dbg('ANALYZE ok:',d.ms+'ms',
+        'hz='+d.hazard_count,'obj='+(d.objects||[]).length,'txt='+(d.texts||[]).length,
+        'kw='+JSON.stringify(d.keyword),'match='+(d.match?d.match.label:'none'));
     if(d.blur){setStatus('Blurry — hold steady','busy');
       speak('Hold the camera steady.',{interrupt:false,liveDedupe:true});
       state.busy=false;return;}
@@ -513,7 +537,7 @@ async function analyze(keyword=''){
     setStatus((hazard?'⚠ '+d.hazard_count+' hazard · ':'')+d.ms+' ms',hazard?'err':'ok');
   }catch(err){
     if(generation!==workflow.generation)return;
-    console.error(err);
+    console.error('[AV] ANALYZE failed:',err);
     const msg=/timeout|abort/i.test(err.name+err.message)?'Server timeout':'Server error';
     setStatus(msg,'err');
     if(!state.live)speak(err.message&&err.message.length<120?err.message:'Cannot reach the vision server.');
@@ -728,8 +752,9 @@ function armGate(){
     gateRec=new SR();gateRec.lang='en-IN';gateRec.continuous=true;gateRec.interimResults=false;
     gateRec.onresult=e=>{
       // The welcome prompt itself says "start" — never act on our own TTS.
-      if(micQuiet())return;
+      if(micQuiet()){dbg('GATE dropped (TTS quiet window)');return;}
       const q=e.results[e.results.length-1][0].transcript.toLowerCase();
+      dbg('GATE heard:',q);
       // voice start = the user asked for scanning, not just the app shell:
       // begin live assist as soon as the server reports ready
       if(/(start|begin)/.test(q)){autoLiveWanted=true;try{gateRec.abort();}catch(_){};startApp();}
@@ -799,7 +824,7 @@ function enqueueSpeech(text,priority){
   if(announcements.push(text,priority)&&priority<=1){speechSynthesis.cancel();drainSpeech();}
 }
 function drainSpeech(){
-  if(speechSynthesis.speaking)return;
+  if(ttsActive)return;
   const next=announcements.take();if(next&&$('transcript'))speak(next.text,{interrupt:false});
 }
 setInterval(drainSpeech,300);
