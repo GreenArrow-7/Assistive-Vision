@@ -47,27 +47,43 @@ def symbols_from_texts(texts):
     return out
 
 
-def match_keyword(keyword: str, texts, symbols, objects):
-    """Find best item matching the user's keyword.
+def normalize(text):
+    import unicodedata
+    return " ".join(re.findall(r"\w+", unicodedata.normalize("NFKC", text).casefold()))
 
-    Priority: trained sign class (most reliable) > text > symbol > object.
-    """
+
+def safe_match(text, query):
+    """Whole-token phrase matching, one OCR edit only on long nonnumeric words."""
+    a, b = normalize(text).split(), normalize(query).split()
+    if not b:
+        return False
+    def token(x, y):
+        if x == y:
+            return True
+        if min(len(x), len(y)) < 5 or any(c.isdigit() for c in x+y):
+            return False
+        # One insertion, deletion or substitution; never truncate whole phrases.
+        if abs(len(x)-len(y)) > 1:
+            return False
+        if len(x) == len(y):
+            return sum(i != j for i, j in zip(x, y)) <= 1
+        if len(x) > len(y):
+            x, y = y, x
+        return any(y[:i] + y[i+1:] == x for i in range(len(y)))
+    return any(all(token(x, y) for x, y in zip(a[i:i+len(b)], b))
+               for i in range(len(a)-len(b)+1))
+
+
+def match_keyword(keyword: str, texts, symbols, objects):
     if not keyword:
         return None
-    k = keyword.lower()
-
-    # trained-model path: "washroom" -> class sign_washroom
+    k = normalize(keyword)
     target = AV_KEYWORD_TO_CLASS.get(k)
-    if target:
-        for pool in (objects, symbols, texts):
-            for it in pool:
-                if it.get("raw") == target:
-                    return it
-
     keys = config.SYMBOL_KEYWORDS.get(k, []) + [k]
+    candidates = []
     for pool in (texts, symbols, objects):
         for it in pool:
-            low = it["label"].lower()
-            if any(mentions(low, key) or mentions(key, low) for key in keys):
-                return it
-    return None
+            if (target and it.get("raw") == target) or any(safe_match(it["label"], key) for key in keys):
+                candidates.append(it)
+    # Nearest relevant result, then confidence. Unknown distances sort last.
+    return min(candidates, key=lambda i: (i.get("steps") or 999, -i.get("conf", 0))) if candidates else None

@@ -17,3 +17,9 @@ datasets/
 runs/
 cloudflared.exe
 datasets/annotate_upload/
+
+.env
+certs/
+.pytest-tmp*/
+web/check.cjs
+pytest-cache-files-*/

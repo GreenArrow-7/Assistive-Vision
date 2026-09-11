@@ -7,6 +7,7 @@ Builds the final spoken message in strict priority order per the project spec:
   4. Environment summary (texts + objects)
 """
 from . import config
+from .environment import context_hint, select_items
 from .classes_av import AV_CRITICAL
 
 
@@ -58,9 +59,9 @@ def build_speech(hazards, objects, texts, symbols, keyword=None, match=None) -> 
     # 3 — symbols (skip any that duplicate the match)
     def _dup(s):
         return match is not None and (
-            s is match or str(s.get("label", "")).lower() == str(match.get("label", "")).lower()
+            s is match or (s.get("box") is not None and s.get("box") == match.get("box")) or str(s.get("label", "")).lower() == str(match.get("label", "")).lower()
         )
-    sym = [s for s in symbols if not _dup(s)][: config.MAX_ANNOUNCE]
+    sym = select_items([s for s in symbols if not _dup(s)], config.MAX_ANNOUNCE)
     if sym:
         parts.append("Signs: " + ", ".join(_fmt(s) for s in sym) + ".")
 
@@ -68,7 +69,10 @@ def build_speech(hazards, objects, texts, symbols, keyword=None, match=None) -> 
     if not keyword:
         rest = [t for t in texts if not (match and t is match)]
         rest += objects   # objects and hazards are disjoint by construction
-        rest = rest[: config.MAX_ANNOUNCE]
+        rest = [r for r in rest if not any(r.get("box") == s.get("box") for s in sym)]
+        rest = select_items(rest, config.MAX_ANNOUNCE)
+        hint = context_hint(texts)
+        if hint: parts.append(hint)
         if rest:
             parts.append("I can see: " + ", ".join(_fmt(r) for r in rest) + ".")
 
@@ -77,4 +81,4 @@ def build_speech(hazards, objects, texts, symbols, keyword=None, match=None) -> 
 
     # critical hazards MUST be counted: the client uses hazard_count > 0 to
     # vibrate, flash and interrupt speech — a lone stairs_down reported 0.
-    return {"speech": " ".join(parts), "hazard_count": len(hz) + len(critical)}
+    return {"speech": " ".join(parts), "hazard_count": len(hazards)}

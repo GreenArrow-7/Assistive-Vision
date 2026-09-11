@@ -72,7 +72,7 @@ def active_schema():
 
 def detect_objects(frame_bgr):
     model = _get_model()
-    res = model.predict(frame_bgr, conf=config.OBJ_CONF, verbose=False)[0]
+    res = model.predict(frame_bgr, conf=config.OBJ_CONF, imgsz=config.IMAGE_SIZE, iou=config.NMS_THRESHOLD, device=config.DEVICE, verbose=False)[0]
     objects, hazards = [], []
     names = res.names
     if res.boxes is None:

@@ -33,7 +33,15 @@ def estimate_steps(label: str, box, frame_w: int, frame_h: int,
     Special case: box touching the frame bottom with large area = at the
     user's feet -> 1 step.
     """
+    if frame_w <= 0 or frame_h <= 0 or len(box) != 4:
+        return None
+    if not all(math.isfinite(v) for v in (*box, pitch_deg)):
+        return None
     x1, y1, x2, y2 = box
+    if x2 <= x1 or y2 <= y1:
+        return None
+    if label.startswith("sign") or label.startswith("stairs"):
+        return None
     m = config.EDGE_MARGIN_PX
     touches_top = y1 <= m
     touches_bottom = y2 >= frame_h - m
@@ -50,13 +58,13 @@ def estimate_steps(label: str, box, frame_w: int, frame_h: int,
         estimates.append(f_px * H / h_px)
 
     # E2 — ground-plane model with pitch correction
-    if not touches_bottom:
+    if label in config.GROUND_CLASSES and not touches_bottom:
         theta = math.atan2(y2 - c_y, f_px) + math.radians(max(0.0, pitch_deg))
         if theta > math.radians(2.0):          # contact point below horizon
             estimates.append(config.CAMERA_HEIGHT_M / math.tan(theta))
 
     # object at the user's feet
-    if touches_bottom:
+    if label in config.GROUND_CLASSES and touches_bottom:
         # frame area from the ACTUAL width. This assumed a 16:9 frame derived
         # from frame_h alone, which overstates the denominator by 33% on 4:3
         # and by 216% on a portrait 9:16 frame — the ratio came out ~3x too
@@ -69,7 +77,7 @@ def estimate_steps(label: str, box, frame_w: int, frame_h: int,
     if not estimates:
         return None
     z_m = min(estimates)                       # conservative: assume closer
-    return int(max(1, min(99, round(z_m / config.STEP_LENGTH_M))))
+    return int(max(1, min(99, math.floor(z_m / config.STEP_LENGTH_M))))
 
 
 def direction(box, frame_w: int) -> str:
@@ -107,6 +115,12 @@ def annotate(items, frame_w: int, frame_h: int, pitch_deg: float = 0.0,
     for it in items:
         it["direction"] = direction(it["box"], frame_w)
         it["proximity"] = proximity(it["box"], frame_w, frame_h)
+        if it.get("kind") == "text":
+            it["steps"] = None
+            it["proximity"] = ""
+            it["distance_method"] = "unavailable"
+            continue
+        it["distance_method"] = "monocular approximation"
         key = it.get("raw") or it.get("label", "")
         it["steps"] = estimate_steps(key, it["box"], frame_w, frame_h,
                                      pitch_deg, vfov)

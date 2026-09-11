@@ -224,7 +224,8 @@ def test_busy_server_sheds_instead_of_queueing():
         main._rate.clear()
 
 
-def test_lock_is_released_when_inference_raises():
+def test_lock_is_released_when_inference_raises(monkeypatch):
+    monkeypatch.setattr(main.text_provider, "detect", lambda _: [])
     """A leaked lock would wedge every later request into permanent 503s."""
     main._state["ready"] = True
     main._rate.clear()
@@ -243,7 +244,8 @@ def test_lock_is_released_when_inference_raises():
 
 
 # ---------- 500s must not leak internals ----------
-def test_server_error_returns_a_reference_not_the_exception():
+def test_component_error_is_degraded_without_leaking_exception(monkeypatch):
+    monkeypatch.setattr(main.text_provider, "detect", lambda _: [])
     """The handler used to return f'{type(exc).__name__}: {exc}' to an endpoint
     that takes no credentials; exception text carries paths and request data."""
     main._state["ready"] = True
@@ -259,9 +261,9 @@ def test_server_error_returns_a_reference_not_the_exception():
         main.detector.detect_objects = real
         main._state["ready"] = False
         main._rate.clear()
-    assert r.status_code == 500, r.status_code
+    assert r.status_code == 200, r.status_code
     body = r.text
     assert secret not in body, body
     assert "RuntimeError" not in body, body
-    ref = r.json()["ref"]
-    assert len(ref) == 6 and ref in r.json()["error"]
+    assert r.json()["component_errors"]
+    assert "Object detection unavailable" in r.json()["speech"]

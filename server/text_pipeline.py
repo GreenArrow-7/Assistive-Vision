@@ -71,15 +71,71 @@ def _deskew(frame, quad):
     return cv2.warpPerspective(frame, M, (w, h))
 
 
+def merge_text_lines(items):
+    """Join adjacent words on the same oriented baseline, preserving a quad.
+
+    CRAFT often returns separate words on a tilted sign, in top-to-bottom order.
+    A phrase search needs reading order, not arbitrary OCR output order.
+    """
+    pending = list(items)
+    merged = []
+    while pending:
+        seed = pending.pop(0)
+        angle = math.radians(seed['angle'])
+        u = np.array([math.cos(angle), math.sin(angle)])
+        v = np.array([-math.sin(angle), math.cos(angle)])
+
+        def bounds(item):
+            q = np.asarray(item['quad'])
+            x, y = q @ u, q @ v
+            return float(x.min()), float(x.max()), float(y.min()), float(y.max())
+
+        group = [seed]
+        changed = True
+        while changed and len(group) < 8:
+            changed = False
+            for candidate in list(pending):
+                delta = abs((candidate['angle'] - seed['angle'] + 90) % 180 - 90)
+                if delta > 12:
+                    continue
+                a, b, c, d = bounds(candidate)
+                for member in group:
+                    e, f, g, h = bounds(member)
+                    height = min(d-c, h-g)
+                    gap = max(a-f, e-b)
+                    if height > 0 and abs((c+d-g-h)/2) < .35 * height and -.2 * height <= gap < height:
+                        group.append(candidate)
+                        pending.remove(candidate)
+                        changed = True
+                        break
+        if len(group) == 1:
+            merged.append(seed)
+            continue
+        group.sort(key=lambda item: bounds(item)[0])
+        extents = [bounds(item) for item in group]
+        left, right = min(x[0] for x in extents), max(x[1] for x in extents)
+        top, bottom = min(x[2] for x in extents), max(x[3] for x in extents)
+        quad = [(u*x + v*y).tolist() for x,y in
+                [(left,top),(right,top),(right,bottom),(left,bottom)]]
+        merged.append({**seed, 'label': ' '.join(i['label'] for i in group),
+                       'conf': min(i['conf'] for i in group), 'quad': quad,
+                       'box': _quad_to_aabb(quad)})
+    return merged
+
+
 def detect_text(frame_bgr):
     """Return list of recognized text items with oriented-box metadata."""
-    obb = _get_obb()
+    try:
+        obb = _get_obb()
+    except Exception:
+        # An invalid optional detector must not disable the CRAFT/OCR fallback.
+        obb = None
     reader = _get_reader()
     items = []
 
     if obb is not None:
         # --- Path A: fine-tuned YOLO-OBB proposals -> deskew -> OCR ---
-        res = obb.predict(frame_bgr, conf=0.35, verbose=False)[0]
+        res = obb.predict(frame_bgr, conf=config.TEXT_CONF, imgsz=config.IMAGE_SIZE, device=config.DEVICE, verbose=False)[0]
         if res.obb is not None:
             for poly, conf in zip(res.obb.xyxyxyxy.cpu().numpy(),
                                   res.obb.conf.cpu().numpy()):
@@ -91,11 +147,13 @@ def detect_text(frame_bgr):
                     items.append({
                         "label": text,
                         "box": _quad_to_aabb(quad),
-                        "conf": float(conf),
+                        "conf": min(float(conf), min(c for _, t, c in out if c >= config.TEXT_CONF)),
+                        "detector_conf": float(conf),
+                        "quad": [[float(x), float(y)] for x, y in quad],
                         "angle": round(_quad_angle(quad), 1),
                         "kind": "text",
                     })
-        return items
+        return merge_text_lines(items)
 
     # --- Path B: EasyOCR end-to-end (CRAFT detector handles rotation) ---
     results = reader.readtext(frame_bgr, detail=1, paragraph=False)
@@ -106,7 +164,8 @@ def detect_text(frame_bgr):
                 "label": text,
                 "box": _quad_to_aabb(quad),
                 "conf": float(conf),
+                "quad": [[float(x), float(y)] for x, y in quad],
                 "angle": round(_quad_angle(quad), 1),
                 "kind": "text",
             })
-    return items
+    return merge_text_lines(items)

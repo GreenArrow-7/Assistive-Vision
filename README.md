@@ -1,181 +1,232 @@
-# Assistive Vision — AI Navigation Assistant for the Visually Impaired
+# Assistive Vision System for Visually Impaired Users Using Oriented Text Detection
 
-Real-time assistive system: a phone browser streams camera frames to a Python
-server that runs **YOLO object/obstacle detection**, **oriented text detection +
-EasyOCR**, **symbol recognition**, **spatial guidance** (left / ahead / right +
-proximity), and returns a **priority-ordered voice message** — hazards first,
-then the user's requested location, then signs, then an environment summary.
-Outdoor mode uses **GPS + Google Maps** walking navigation.
+## Project overview
+A mobile web visual-assistance prototype backed by local FastAPI inference. It reads
+signs using oriented text regions and EasyOCR, detects supported objects with YOLO,
+and speaks concise, prioritized information. It is an assistive research prototype,
+not a replacement for mobility aids, judgment, or a trained mobility professional.
 
-Final Year Project — Dept. of CSE, ATMECE Mysuru (2025–26).
+## Features and available modes
+- **Environment Summary:** sampled camera frames, supported objects/hazards, signs,
+  and cautious context hints based on multiple textual clues.
+- **Keyword Search:** continuous scanning, normalized whole-token phrases, restricted
+  one-edit fuzzy matching on long words, exact digits, two-frame text confirmation.
+- **Navigation:** browser geolocation and an explicit Google Maps handoff. No routing
+  service is configured: route distance/time are null, destination resolution is
+  delegated to Maps, and the app tells the user this.
+- Large Start/mode/Stop/Repeat buttons, keyboard focus, zoom, high contrast, text
+  transcript, voice commands, and portrait camera capture.
+- Priority speech queue with cooldown, bounded backlog and hazard interruption.
+- Partial inference failures are disclosed while available components continue.
+- No permanent camera-frame or microphone recording by the application.
 
+## Architecture and system flow
+```text
+Phone camera -> resized JPEG -> FastAPI -> object detector + oriented text/OCR
+                                         -> spatial analysis -> temporal checks
+                                         -> search/context/priority -> JSON
+Phone <- polygons + warnings + speech text <- response
+Phone speech queue -> browser TTS
+Navigation: browser GPS -> local handoff provider -> user opens Google Maps
 ```
-Phone (web app)                     Server (FastAPI, Python)
-┌─────────────────────┐   JPEG    ┌──────────────────────────────────┐
-│ Camera live capture ├──────────►│ YOLOv8  → objects + hazards      │
-│ Voice input (STT)   │  keyword  │ YOLO-OBB / EasyOCR → texts       │
-│ TTS speech output   │◄──────────┤ Symbol map → signs               │
-│ GPS → Google Maps   │   JSON    │ Spatial → direction + proximity  │
-└─────────────────────┘  +speech  │ Priority engine → spoken string  │
-                                  └──────────────────────────────────┘
-```
+`server/interfaces.py` defines replaceable vision/navigation contracts and local
+adapters. The existing `startCamera`/`grabBlob` functions form the browser camera
+boundary; a wearable client can post JPEG frames to the same API. Speech recognition
+and synthesis use browser APIs, so the server does not need microphone access.
 
-## 1. Quick start (server)
+## Technology stack and repository layout
+Python 3.11/3.12, FastAPI, Pydantic, OpenCV, Ultralytics YOLO, EasyOCR (CRAFT),
+vanilla HTML/CSS/JavaScript, browser media/geolocation/speech APIs.
 
-```bash
-git clone https://github.com/<you>/assistive-vision.git
-cd assistive-vision
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate  (Python 3.11/3.12)
-pip install -r requirements.txt
-python -m server.main            # or: uvicorn server.main:app --host 0.0.0.0 --port 8000
-```
-
-First run auto-downloads `yolov8n.pt` (~6 MB) and EasyOCR English models
-(~100 MB). CPU works; set `OCR_GPU = True` in `server/config.py` for CUDA.
-
-Open http://localhost:8000 — the web app is served by the same server.
-Models warm up in the background; the app shows a loading overlay and
-unlocks automatically when `/health` reports `ready: true`.
-
-## 2. Run on your phone
-
-The camera API requires **HTTPS** (or localhost). Easiest tunnel:
-
-```bash
-# option A — cloudflared (free, no signup)
-cloudflared tunnel --url http://localhost:8000
-# option B — ngrok
-ngrok http 8000
-```
-
-Open the generated `https://…` URL in **Chrome on Android** (full support:
-camera, voice input, TTS, vibration, GPS). iOS Safari: everything works except
-voice *input* — use the keyword chips.
-
-## 3. Using the app
-
-| Control | What it does |
+| Location | Responsibility |
 |---|---|
-| **START LIVE ASSIST** | Continuous scan every ~2.6 s; hazards trigger vibration + red flash + "Caution…" spoken first |
-| **VOICE** | Say `find washroom`, `locate exit`, or `navigate to city hospital` |
-| Keyword chips | One-tap search: Exit, Washroom, Lift, Reception, Pharmacy, Cafeteria, Parking, Stairs |
-| **Scan once** | Single frame analysis with full environment summary |
-| **Outdoor navigation** | GPS position → Google Maps walking turn-by-turn |
-| Overlay colors | 🔴 hazard · 🟡 text · 🔵 object · 🟢 symbol · white dashed = your keyword match |
+| `server/main.py` | API, bounded uploads, model warmup, sampled inference, session confirmation |
+| `server/config.py`, `.env.example` | Validated runtime options |
+| `server/detector.py`, `server/text_pipeline.py` | Model adapters, oriented quads and rectified OCR |
+| `server/spatial.py` | Directions and conservative approximate object steps |
+| `server/symbols.py`, `server/environment.py`, `server/priority.py` | Matching, summary selection, hazard ordering |
+| `server/navigation.py` | Validated navigation request and Maps fallback |
+| `web/index.html`, `web/workflow.js` | Accessible UI, state machine, camera, voice and speech queue |
+| `scripts/` | Dataset converters, validation/splitting, training, evaluation, HTTPS launcher |
+| `tests/` | Python regressions and JavaScript state/queue tests |
+| `docs/IMPLEMENTATION_LOG.md` | Inspection, changes, verification and limitations |
 
-Speech priority (per spec): **1) hazards → 2) keyword result → 3) symbols →
-4) environment summary.** Distant "hazard-class" objects are demoted to plain
-objects; only close ones interrupt.
+## Installation and environment setup
+Run from the project root. Existing workspace already contains `.venv` and cached
+models; a fresh installation needs dependencies and model downloads.
 
-## 4. Repository layout
-
-```
-server/
-  main.py           FastAPI app — POST /analyze, serves web/
-  detector.py       YOLOv8 objects + obstacle split
-  text_pipeline.py  YOLO-OBB (if models/text_obb.pt exists) else EasyOCR CRAFT;
-                    perspective deskew of rotated quads before OCR
-  symbols.py        symbol resolution + voice-query cleaning + keyword match
-  spatial.py        direction (frame thirds) + proximity (bbox area ratio)
-  priority.py       hazard-first speech builder
-  config.py         thresholds, hazard/object class sets, symbol keyword map
-  classes_av.py     AV-6 trained schema (schema id derived from the class list)
-                    + 14-name annotation vocabulary, hazard roles
-web/index.html      mobile web app (camera, live loop, STT, TTS, GPS nav)
-scripts/            model download, dataset build, stairs up/down re-tag queue,
-                    internet data sourcing
-                    (fetch_videos.py, pull_open_datasets.py — see
-                    docs/DATA_SOURCING.md), YOLO-OBB text training guide
-tests/              146 pytest tests: pipeline logic, API limits, dataset tooling
-```
-
-## 5. Training the YOLO-OBB text detector (optional upgrade)
-
-Out of the box, text detection uses EasyOCR's CRAFT detector (handles rotated
-quads natively). To use a true **YOLOv8-OBB** text model as described in the
-report, follow `scripts/train_obb.md` (ICDAR-2015 → OBB label conversion →
-`yolo obb train`). Drop the result at `models/text_obb.pt` — the pipeline
-switches to it automatically (see `/health`).
-
-## 6. Tests
-
-```bash
-pip install -r requirements-dev.txt   # test-only deps, kept out of the image
-python -m pytest tests/ -q
-```
-
-## 7. API
-
-`POST /analyze` — multipart `frame` (JPEG, max 8 MB) + `keyword` (optional string)
-
-Returns `413` if the frame exceeds the limit, `503` while models are warming,
-`400` if the JPEG cannot be decoded, `429` past 60 requests/minute per client IP
-(a live session sends ~23/min, so normal use never hits it).
-
-`GET /health` returns `503` — not `200` — when model warmup failed, so an
-orchestrator restarts a worker that can never serve a request.
-
-There is no CORS header: the web app is served by this same process, so it is
-same-origin. Serving the frontend from a different host is not supported.
-
-```json
-{
-  "speech": "Caution. person straight ahead, very close. washroom found: washroom is on your left, nearby.",
-  "hazard_count": 1,
-  "match": {"label": "washroom", "direction": "on your left", "proximity": "nearby", ...},
-  "hazards": [...], "objects": [...], "texts": [...], "symbols": [...],
-  "frame": {"w": 960, "h": 720}, "ms": 412
-}
-```
-
-## 8. Known limitations (honest notes for the viva)
-
-* Symbol recognition is keyword/class-mapped, not a trained icon classifier —
-  a custom YOLO symbol dataset is the documented upgrade path
-  (`docs/ANNOTATION_BRIEF.md`; the upload bundle is built and waiting).
-* Proximity is monocular (bbox-area heuristic), not metric depth.
-* Outdoor turn-by-turn is delegated to Google Maps rather than re-implemented.
-* Live-assist latency is CPU-bound (~0.5–2 s/frame on a laptop CPU).
-
-## License
-
-MIT
-
-## 9. Deployment
-
-### Path A — Demo from your laptop (free, 2 minutes)
 ```powershell
-python -m server.main
-.\cloudflared.exe tunnel --url http://localhost:8000
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+Copy-Item .env.example .env
 ```
-Open the printed https URL on your phone. Laptop must stay on.
+On Linux/macOS use `python3 -m venv .venv` and `.venv/bin/python` instead.
+For runtime-only installations, use `requirements.txt`. Use Node 24 for frontend
+tests; no frontend package installation or build is needed.
 
-### Path B — Permanent live URL: Hugging Face Spaces (free CPU)
-This repo includes a Dockerfile ready for HF Spaces.
+## Running backend and frontend
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn server.main:app --host 127.0.0.1 --port 8000 --env-file .env
+```
+Open **http://localhost:8000**. FastAPI serves the frontend at the same origin.
+Interactive API documentation is at **http://localhost:8000/docs**.
+`python -m server.main` also runs the app but does not load `.env` automatically.
 
-**Verified 2026-08-29** by an actual `docker build` + run, not by inspection:
-image builds clean (793 MB of layers, 3.24 GB on disk), `/health` returns 200
-with `ready: true`, `/analyze` answers real frames end-to-end (detection, OCR,
-step distance, keyword search), the web app is served, and a 9 MB upload is
-rejected with 413. In-container latency 3.5–6.2 s/frame on a laptop CPU.
+Environment options include model paths, CPU/GPU device, inference size, confidence,
+NMS, frame interval (milliseconds), OCR interval (sampled frames), speech cooldown
+(seconds), step length, camera height/FOV, language and TTS rate. Do not put secrets
+in the frontend. `.env` and `certs/` are ignored by Git.
 
-`/health` reports `"object_schema": "coco"` in a stock image: `.dockerignore`
-excludes `*.pt`, so the COCO fallback ships and the custom schema appears only
-once you place `models/av_obstacle.pt` before building.
+## Model setup
+Default object model: `yolov8n.pt` (COCO), downloaded by Ultralytics if missing.
+Optional evaluated AV-6 model: `models/av_obstacle.pt`. Schema is validated from the
+model class names. Two candidate checkpoints exist in this workspace; they have not
+been promoted by this implementation. The AV-6 vocabulary lacks vehicles and must
+not be represented as an outdoor hazard detector.
 
-1. Create account at https://huggingface.co → New Space → SDK: **Docker** → CPU basic (free).
-2. Push this repo to the Space:
-   ```bash
-   git remote add hf https://huggingface.co/spaces/<user>/<space>
-   git push hf main
-   ```
-3. First build takes ~15 min (bakes YOLO + EasyOCR models into the image).
-   Your app is then live at `https://<user>-<space>.hf.space` — open it on any phone, HTTPS included, camera/voice/GPS all work.
+Default text path: cached or first-run downloaded EasyOCR English CRAFT detector and
+recognizer. Output retains all four quad corners and an angle. Optional custom
+`models/text_obb.pt` must be an OBB model; its proposals are perspective-rectified
+before OCR. Invalid optional OBB weights fall back to CRAFT and warmup health reports
+the unavailable component. OCR confidence gates recognized text.
 
-Notes: free CPU ≈ 2–5 s per frame (set live-assist expectations accordingly);
-Space sleeps after 48 h idle and wakes on first visit (~1 min).
+No text OBB checkpoint is present. **MODEL TRAINING NOT YET COMPLETED** for the full
+requested custom text/hazard coverage. Historical candidate runs are retained;
+no new training or accuracy claims are made here. Pits and descending stairs are
+not supported by the default model. Review model/dataset licenses separately from
+the repository's MIT license before distributing weights.
 
-### Why not GitHub Pages / Render free?
-GitHub Pages serves static files only — it cannot run the Python/YOLO backend.
-Render's free tier (512 MB RAM) OOMs loading torch + EasyOCR.
-# Assistive-Vision
+## HTTPS smartphone testing
+Use a trusted HTTPS origin for phone camera/microphone access. A phone's localhost
+is the phone itself; use the computer's LAN address on the same trusted network.
+No LAN address is hard-coded.
+
+With [mkcert](https://github.com/FiloSottile/mkcert) installed, create a local
+certificate containing your chosen LAN address:
+```powershell
+$lanAddress = Read-Host 'Computer LAN IP address'
+New-Item -ItemType Directory -Force certs
+mkcert -install
+mkcert -cert-file certs/dev.pem -key-file certs/dev-key.pem localhost 127.0.0.1 $lanAddress
+.\scripts\run_https.ps1 -Certificate certs/dev.pem -Key certs/dev-key.pem
+```
+Follow mkcert's mobile instructions to install/trust **rootCA.pem** on your own test
+phone. Never share **rootCA-key.pem**. Open `https://<LAN-address>:8443` on the phone.
+The certificate must cover that address. Allow the server port on your private LAN
+if needed. Certificate installation and phone testing are manual setup steps;
+they have not been performed on your phone in this session.
+
+The launcher uses Uvicorn's documented [TLS and environment-file settings](https://www.uvicorn.org/settings/).
+A trusted HTTPS tunnel is another option, but it exposes the server and sends frames
+through the tunnel provider. This prototype has no user authentication: keep it on
+a trusted local network unless you add authenticated access and edge rate limits.
+
+## Voice commands and controls
+Start/Begin -> menu. One/Environment/Summary -> environment mode. Two/Search -> query.
+Three/Navigation -> destination. `Find washroom`, `find room 205`, `go to Bangalore`,
+Stop, Back/Main Menu, Repeat, Scan are supported. Existing Help, mute, and calibration
+controls remain available. All core actions also have buttons/text fields.
+
+A browser may block automatic speech or listening before the first tap. Tap the
+welcome area to activate voice, or use Start. Speech recognition availability varies
+by browser and may rely on an external browser service. TTS may use installed local
+voices. Neither offline speech recognition nor every mobile browser is guaranteed.
+
+Stop cancels pending responses and speech, stops the camera, and disables microphone
+recognition. Going to the background stops an active visual session. Return to the
+menu to select a mode again; use the voice button to re-enable listening if stopped.
+
+## API documentation
+All image routes accept multipart `frame`, optional `keyword` (max 200 characters),
+`mode` (`single` or `live`), `session`, `pitch` and `vfov`. Live clients should use a
+fresh session ID per camera session. Frames are limited to 8 MiB including multipart
+body and 20 million decoded pixels; inference resizes to at most 960 pixels per side.
+
+| Endpoint | Behavior |
+|---|---|
+| `GET /api/health` or `/health` | Model readiness, actual schema, degraded components |
+| `GET /api/config` | Public client options only |
+| `POST /api/analyze/frame` or `/analyze` | Integrated frame processing |
+| `POST /api/search`, `/api/environment` | Same integrated pipeline; search supplies keyword |
+| `POST /api/detect/text`, `/api/detect/objects` | Integrated pipeline aliases; return all groups so hazards remain available |
+| `POST /api/navigation` | JSON destination, optional latitude/longitude pair -> honest Maps handoff |
+
+Responses include `texts` (quads/confidence), objects, hazards, match, speech, priority,
+component errors, dimensions and measured processing milliseconds. 400: invalid
+image; 413: oversized; 422: invalid parameters; 429: rate limit; 503: loading/busy.
+A component failure can return 200 with explicit `component_errors`; clients must
+surface this and never interpret an empty list as a safe path.
+
+Coordinates refer to the returned resized frame. Text detection runs less often in
+idle environment mode; skipped OCR frames contain no stale text coordinates. Search
+uses fresh OCR each frame. Text is confirmed across actual OCR observations; objects
+and hazards across consecutive sampled frames. Stability and cooldown are heuristic,
+not identity tracking or proof of detection accuracy.
+
+## Dataset setup and training
+Existing datasets, annotations, splits and candidate runs were preserved. Do not
+mix COCO and AV class indices or evaluate against unreviewed pseudo-labels as truth.
+Consult `docs/TRAINING.md`, `docs/DATA_SOURCING.md`, `scripts/train_obb.md`, and
+`docs/ANNOTATION_BRIEF.md` for the existing workflows. Review historical counts and
+claims against the actual files before using them in a paper.
+
+Converters: `convert_icdar_to_obb.py`, `convert_cocotext_to_obb.py`,
+`convert_synthtext_to_obb.py`. Split by source video using `prepare_split.py` to avoid
+near-duplicate leakage. `train_local_baseline.py` and the Colab trainers enforce
+class-coverage gates and write candidate checkpoints. Run each with `--help` before
+choosing dataset/output paths. No dataset downloads are required or performed here.
+
+## Testing
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests -q
+node --test --test-isolation=none tests/test_workflow.cjs
+.\.venv\Scripts\python.exe scripts/smoke_test.py
+```
+The smoke test runs real models on generated horizontal/tilted signs and saves
+actual outputs to `runs/prototype-smoke.json`. This is integration verification,
+not a representative OCR accuracy benchmark. Python tests use test doubles where
+needed and do not prove live-camera behavior. Windows sandbox users may need to run
+pytest in a normal terminal so its temporary test directories are writable.
+
+## Evaluation
+`evaluate.py` retains separate raw-model and deployed-pipeline evaluation, latency
+statistics and self-evaluation safeguards. Use its `--help` and existing dataset
+configuration. YOLO validation supplies model mAP; do not substitute fixed-threshold
+F1 for mAP.
+
+`evaluate_text.py` evaluates supplied four-point polygons with rotated IoU, one-to-one
+matching, precision, recall, F1, matched OCR exact accuracy, CER and WER:
+```powershell
+.\.venv\Scripts\python.exe scripts/evaluate_text.py annotations-and-predictions.json --output runs/text-evaluation.json
+```
+The file format is documented in that script. OCR metrics cover matched detections;
+missed text reduces detection recall. Do not use generated test fixtures as paper
+results. Real camera-to-speech, direction, step-distance and command-recognition
+accuracy require labeled physical trials; no values are claimed for those here.
+
+## Troubleshooting
+- Camera denied/unavailable: use HTTPS, enable camera permission in browser settings,
+  close other camera users, and choose the mode again. Navigation needs no camera.
+- Microphone denied/unsupported: use buttons and typed queries; voice control is optional.
+- Models loading/missing: inspect `/api/health`, server logs, paths and network access
+  for first-run downloads. Once weights are cached, vision runs on the computer.
+- Timeout/network failure: keep the server running, check the local address and reduce
+  inference size if needed. The browser never queues simultaneous inference requests.
+- OCR errors: improve lighting and hold the camera steady. Missing detections are not
+  evidence that the scene is clear.
+- Geolocation denied: Maps can choose its own origin after handoff. No distance/time
+  is fabricated. The [Maps URL integration](https://developers.google.com/maps/documentation/urls/get-started)
+  uses encoded destination and optional origin; no frontend API key is required.
+
+## Limitations and future work
+Monocular object distances depend on assumed class height, camera height/FOV and
+floor contact. They are approximate, conservatively rounded down, and unvalidated
+for mobility safety. Sign/stair step estimates are withheld. Default pitch is zero;
+portrait orientation can supply a tilt hint, but gyro availability is optional.
+Calibration is approximate and must be checked against measurements.
+
+CPU inference may take many seconds; no guaranteed real-time FPS is claimed. The
+COCO fallback does not cover doors, walls, stairs or pits. Custom AV-6 coverage is
+also incomplete. Future work: evaluated OBB/hazard models, metric depth calibration,
+robust multi-frame tracking, authenticated deployment, offline speech recognition,
+an optional route provider, user trials and a chest-camera client.
