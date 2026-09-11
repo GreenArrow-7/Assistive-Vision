@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#0b0508">
 <title>Assistive Vision — AI Navigation Assistant</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+
+
 <style>
   :root{
     --bg:#0b0508; --panel:rgba(32,18,24,.82); --stroke:rgba(255,255,255,.09);
@@ -162,6 +162,18 @@
   #navCard .go{background:linear-gradient(135deg,var(--sym),#1fa244);color:#031007;border:none;
     border-radius:var(--r-md);min-height:60px;font-size:16.5px;font-weight:800;font-family:'Sora'}
   #navCard .cls{background:none;border:none;color:var(--dim);font-size:14px;font-weight:700;padding:9px}
+
+:root{--dim:#d2bdc3} html,body{overflow:auto;font-family:system-ui,sans-serif}
+#app{min-height:100dvh;height:auto} #stage{min-height:32dvh;flex:none}
+button:focus-visible,input:focus-visible,a:focus-visible{outline:4px solid #e8c37e;outline-offset:3px}
+#row2{flex-wrap:wrap} #row2 button{min-width:85px;min-height:52px}
+#gate{overflow:auto;justify-content:flex-start;padding-top:8vh}
+#modePanel{padding:16px;display:grid;gap:12px} #modeChoices,#queryForm{display:grid;gap:12px}
+#modePanel button{min-height:60px;font-size:18px;font-weight:700;border:2px solid #e8c37e;border-radius:12px;background:#201218;color:#f6f1ee;padding:12px}
+#queryInput{font:inherit;font-size:20px;padding:14px;background:#fff;color:#111;border-radius:8px}
+#modePanel #stopAll{border-color:#ff453a} #transcript,#componentStatus{font-size:16px;line-height:1.5}
+#mapLink{color:#e8c37e;font-size:20px;padding:16px} [hidden]{display:none!important}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
@@ -186,6 +198,22 @@
     <div id="status"><i></i><span>Connecting…</span></div>
   </header>
 
+  <section id="modePanel" aria-label="Assistance controls">
+    <h2 id="modeStatus">Choose assistance</h2>
+    <div id="modeChoices">
+      <button data-mode="ENVIRONMENT">1. Environment Summary</button>
+      <button data-mode="SEARCH">2. Keyword Search</button>
+      <button data-mode="NAVIGATION">3. Navigation</button>
+    </div>
+    <form id="queryForm" hidden><label id="queryLabel" for="queryInput">What would you like me to find?</label>
+      <input id="queryInput" maxlength="200" autocomplete="off"><button type="submit">Continue</button>
+    </form>
+    <p id="componentStatus">Camera: off. Microphone: off. Detection: idle. OCR: idle.</p>
+    <p id="transcript" role="status" aria-live="polite"></p>
+    <a id="mapLink" hidden target="_blank" rel="noopener noreferrer">Open Google Maps directions</a>
+    <button id="repeatBtn">Repeat last instruction</button><button id="menuBtn">Back to main menu</button><button id="stopAll">Stop camera and microphone</button>
+    <p>Visual assistance can miss hazards. Continue using your mobility aid.</p>
+  </section>
   <div id="stage" role="button" tabindex="0" aria-label="Camera view. Activate to scan the surroundings once.">
     <video id="video" autoplay playsinline muted></video>
     <canvas id="overlay"></canvas>
@@ -219,7 +247,7 @@
     </div>
     <div id="row2">
       <button id="scanOnce">📷 Scan once</button>
-      <button id="repeatBtn">🔁 Repeat</button>
+
       <button id="hazOnly">⚠ Hazards only</button>
       <button id="navBtn">🗺 Navigate</button>
       <button id="muteBtn" aria-label="Mute voice output" aria-pressed="false">🔊</button>
@@ -232,7 +260,7 @@
   <div id="navCard">
     <h2>🗺 Outdoor navigation</h2>
     <p>Uses your GPS position and opens Google Maps walking directions with turn-by-turn voice guidance.</p>
-    <input id="dest" placeholder="Destination — e.g. City Hospital" autocomplete="off" enterkeyhint="go">
+    <label for="dest">Destination</label><input id="dest" placeholder="Destination — e.g. City Hospital" autocomplete="off" enterkeyhint="go">
     <button class="go" id="navGo">Start walking directions</button>
     <button class="cls" id="navClose">Cancel</button>
   </div>
@@ -240,15 +268,69 @@
 
 <canvas id="work" hidden></canvas>
 
+<script src="/workflow.js">
+function updateComponentStatus(d=null){
+  if(d)state.lastResult=d;else d=state.live?state.lastResult:null;
+  $('componentStatus').textContent='Camera: '+(video.srcObject?.getTracks().some(t=>t.readyState==='live')?'on':'off')+
+    '. Microphone: '+(state.recActive?'listening':state.cmd?'waiting':SR?'off':'unavailable')+
+    '. Detection: '+(d?.component_errors?.length?'partially unavailable':state.live?'scanning':'idle')+
+    '. OCR: '+(d?.ocr_active?'active':'idle')+'.';
+}
+async function selectMode(mode,query=''){
+  state.live=false;clearTimeout(state.liveTimer);activeRequest?.abort();announcements.clear();speechSynthesis.cancel();
+  workflow.transition(mode,query);const generation=workflow.generation;
+  SID=crypto.randomUUID?crypto.randomUUID():Math.random().toString(36).slice(2);
+  state.lastResult=null;
+  video.srcObject?.getTracks().forEach(t=>t.stop());video.srcObject=null;
+  $('modeChoices').hidden=mode!=='MAIN_MENU';$('queryForm').hidden=!['SEARCH','NAVIGATION'].includes(mode);
+  $('mapLink').hidden=true;$('queryInput').value=query;
+  const visual=['ENVIRONMENT','SEARCH'].includes(mode);$('stage').hidden=!visual;$('controls').hidden=!visual;
+  $('modeStatus').textContent={MAIN_MENU:'Choose assistance',ENVIRONMENT:'Environment Summary',SEARCH:'Keyword Search',NAVIGATION:'Navigation',STOPPED:'Assistance stopped'}[mode]||mode;
+  liveBtn.classList.remove('on');liveBtn.querySelector('span').textContent='Start live assist';
+  if(mode==='STOPPED'){state.cmd=false;pauseCmdRec();syncVoiceBtn();speak('Stopped. Camera and microphone are off.',{resumeCmd:false});updateComponentStatus();return;}
+  if(mode==='MAIN_MENU'){speak('Please select the assistance mode. Say one for environment summary, two for keyword search, or three for navigation.');document.querySelector('#modeChoices button')?.focus();updateComponentStatus();return;}
+  if(mode==='NAVIGATION'){$('queryLabel').textContent='Where would you like to go?';if(query)navigateTo(query);else {speak('Where would you like to go?');$('queryInput').focus();}updateComponentStatus();return;}
+  $('queryLabel').textContent='What would you like me to find?';
+  if(mode==='SEARCH'&&!query){speak('What would you like me to find?');$('queryInput').focus();updateComponentStatus();return;}
+  try{
+    await startCamera(generation);
+    if(generation!==workflow.generation)return;
+    state.live=true;liveBtn.classList.add('on');liveBtn.querySelector('span').textContent='Stop live assist';
+    speak(mode==='SEARCH'?'Searching for '+query:'Scanning your surroundings.');loop();
+  }catch(e){if(generation!==workflow.generation)return;speak('Camera permission is required for visual assistance. Use HTTPS and allow camera access in browser settings, then choose the mode again.');}
+  updateComponentStatus();
+}
+function enqueueSpeech(text,priority){
+  if(announcements.push(text,priority)&&priority<=1){speechSynthesis.cancel();drainSpeech();}
+}
+function drainSpeech(){
+  if(speechSynthesis.speaking)return;
+  const next=announcements.take();if(next&&$('transcript'))speak(next.text,{interrupt:false});
+}
+setInterval(drainSpeech,300);
+setInterval(()=>{if($('componentStatus'))updateComponentStatus();},1500);
+document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>selectMode(b.dataset.mode));
+$('menuBtn').onclick=()=>selectMode('MAIN_MENU');$('stopAll').onclick=()=>selectMode('STOPPED');
+$('queryForm').onsubmit=e=>{e.preventDefault();const query=$('queryInput').value.trim();if(query)selectMode(workflow.mode,query);};
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&state.live)selectMode('STOPPED');});
+window.addEventListener('pagehide',()=>{activeRequest?.abort();video.srcObject?.getTracks().forEach(t=>t.stop());pauseCmdRec();});
+</script>
 <script>
 'use strict';
 const API=location.origin;
-const SID=Math.random().toString(36).slice(2,10);
+const speechSynthesis=window.speechSynthesis||{speaking:false,cancel(){},resume(){},getVoices(){return []},speak(){}};
+const workflow=new AssistiveWorkflow.Workflow();
+const announcements=new AssistiveWorkflow.AnnouncementQueue();
+let options={frame_interval:2600,announcement_cooldown:9000,tts_rate:1.05,language:'en-IN'};
+let activeRequest=null;
+fetch('/api/config').then(r=>r.json()).then(c=>{options=c;announcements.cooldown=c.announcement_cooldown;}).catch(()=>{});
+
+let SID=Math.random().toString(36).slice(2,10);
 let VFOV=parseFloat((()=>{try{return localStorage.getItem('av_vfov')}catch(e){return null}})())||0;
 let calib=false;
 let devicePitch=0; // degrees camera tilted below horizontal
 window.addEventListener('deviceorientation',e=>{
-  if(e.beta!=null){const p=90-e.beta; if(isFinite(p))devicePitch=Math.max(-10,Math.min(70,p));}
+  if(e.beta!=null&&Math.abs(screen.orientation?.angle||0)%180===0){const p=90-e.beta; if(isFinite(p))devicePitch=Math.max(-10,Math.min(70,p));}
 });
 const $=id=>document.getElementById(id);
 const video=$('video'),overlay=$('overlay'),work=$('work'),resultsEl=$('results'),
@@ -281,7 +363,9 @@ pickVoice();
 if('onvoiceschanged' in speechSynthesis)speechSynthesis.onvoiceschanged=pickVoice;
 
 function speak(text,{interrupt=true,liveDedupe=false,resumeCmd=true,then=null}={}){
-  if(state.muted||!text){if(then)then();return;}
+  if(!text){if(then)then();return;}
+  if($('transcript'))$('transcript').textContent=text;state.lastSpeech=text;
+  if(state.muted||!window.speechSynthesis){if(then)then();return;}
   if(liveDedupe){
     const now=Date.now();
     if(text===state.lastSpokenLive&&now-state.lastSpokenLiveAt<9000)return;
@@ -295,7 +379,7 @@ function speak(text,{interrupt=true,liveDedupe=false,resumeCmd=true,then=null}={
     if(interrupt)speechSynthesis.cancel();
     pauseCmdRec();                       // mic off while we talk (no self-echo)
     const u=new SpeechSynthesisUtterance(text);
-    u.rate=1.05;u.lang='en-IN';
+    u.rate=options.tts_rate;u.lang=options.language;
     if(femaleVoice){u.voice=femaleVoice;u.lang=femaleVoice.lang;}
     u.onend=()=>{if(resumeCmd)resumeCmdRec();follow();};
     u.onerror=()=>{if(resumeCmd)resumeCmdRec();follow();};
@@ -319,7 +403,7 @@ function startCmdRec(){
     };
     cmdRec.onerror=e=>{
       state.recActive=false;
-      if(e.error==='not-allowed'){state.cmd=false;syncVoiceBtn();
+      if(['not-allowed','service-not-allowed','audio-capture'].includes(e.error)){state.cmd=false;syncVoiceBtn();
         setStatus('Mic blocked','err');
         speak('Microphone permission is blocked. Voice commands are off.',{resumeCmd:false});}
     };
@@ -346,6 +430,9 @@ function syncVoiceBtn(){
 
 /* ---------- command router ---------- */
 function handleCommand(q){
+  const command=workflow.command(q);
+  if(command){if(command[0]==='REPEAT'){speak(state.lastSpeech);return;}selectMode(...command);return;}
+
   buzz(35);setStatus('“'+q+'”','busy');
   if(/\b(start|begin|resume)\b.*\b(scan|scanning|live|assist)\b/.test(q)||/^start$/.test(q)){
     if(!state.live)toggleLive();else speak('Live assist is already on.');return;}
@@ -374,9 +461,12 @@ $('hazOnly').onclick=function(){state.hazOnly=!state.hazOnly;this.classList.togg
   speak(state.hazOnly?'Hazards only mode. I will speak only for obstacles.':'Full announcements on.');};
 
 /* ---------- camera ---------- */
-async function startCamera(){
+async function startCamera(generation=workflow.generation){
+  if(video.srcObject?.getTracks().some(t=>t.readyState==='live'))return;
+  if(!navigator.mediaDevices?.getUserMedia)throw new Error('Camera requires HTTPS or localhost.');
   const stream=await navigator.mediaDevices.getUserMedia({
     video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false});
+  if(generation!==workflow.generation){stream.getTracks().forEach(t=>t.stop());return;}
   video.srcObject=stream;
   await new Promise(r=>video.onloadedmetadata=r);
   await video.play();
@@ -403,6 +493,7 @@ async function pollHealth(){
     if(h.ready){
       if(!state.ready){state.ready=true;warmupEl.classList.remove('show');
         setStatus('Ready · v'+(h.version||'?')+(h.text_obb?' · OBB':''),'ok');
+        updateComponentStatus();
         if(autoLiveWanted&&!state.live){autoLiveWanted=false;
           speak('All systems ready.',{then:()=>{if(!state.live)toggleLive();}});}
         else speak('All systems ready. Say start scanning, or a command like find washroom.');}
@@ -417,6 +508,7 @@ async function pollHealth(){
 
 /* ---------- analyze ---------- */
 async function analyze(keyword=''){
+  const generation=workflow.generation;
   if(state.busy)return;
   if(!state.ready){speak('The server is still loading its AI models. Please wait.');return;}
   state.busy=true;
@@ -426,13 +518,17 @@ async function analyze(keyword=''){
     const fd=new FormData();
     fd.append('frame',blob,'frame.jpg');
     fd.append('keyword',keyword||'');
-    fd.append('mode',state.live&&!keyword?'live':'single');
+    fd.append('mode',state.live?'live':'single');
     fd.append('session',SID);
     fd.append('pitch',String(Math.round(devicePitch)));
     if(VFOV)fd.append('vfov',String(VFOV.toFixed(1)));
-    const r=await fetch(API+'/analyze',{method:'POST',body:fd,
-      signal:AbortSignal.timeout(25000)});     // hung request can't lock the app
+    activeRequest=new AbortController();
+    const timeout=setTimeout(()=>activeRequest?.abort(),25000);
+    let r;
+    try{r=await fetch(API+'/analyze',{method:'POST',body:fd,signal:activeRequest.signal});}
+    finally{clearTimeout(timeout);}     // hung request can't lock the app
     const d=await r.json();
+    if(generation!==workflow.generation)return;
     if(!r.ok)throw new Error(d.error||('HTTP '+r.status));
     if(d.blur){setStatus('Blurry — hold steady','busy');
       speak('Hold the camera steady.',{interrupt:false,liveDedupe:true});
@@ -442,15 +538,16 @@ async function analyze(keyword=''){
     if(hazard){buzz([120,60,120]);flashHazard();}
     const shouldSpeak=hazard||keyword||!state.hazOnly;
     if(shouldSpeak)
-      speak(d.speech,{interrupt:hazard||!!keyword,liveDedupe:state.live&&!keyword});
+      enqueueSpeech(d.speech,d.priority??(hazard?1:3));
+    updateComponentStatus(d);
     setStatus((hazard?'⚠ '+d.hazard_count+' hazard · ':'')+d.ms+' ms',hazard?'err':'ok');
   }catch(err){
+    if(generation!==workflow.generation)return;
     console.error(err);
     const msg=/timeout|abort/i.test(err.name+err.message)?'Server timeout':'Server error';
     setStatus(msg,'err');
     if(!state.live)speak(err.message&&err.message.length<120?err.message:'Cannot reach the vision server.');
-  }
-  state.busy=false;
+  }finally{state.busy=false;activeRequest=null;}
 }
 function flashHazard(){const f=$('hazardFlash');f.style.display='block';
   setTimeout(()=>f.style.display='none',1600);}
@@ -468,7 +565,8 @@ function render(d){
     const [x1,y1,x2,y2]=it.box;
     ctx.strokeStyle=color;
     if(it.confirmed===false)ctx.setLineDash([9,7]);
-    ctx.strokeRect(x1,y1,x2-x1,y2-y1);ctx.setLineDash([]);
+    if(it.quad){ctx.beginPath();it.quad.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.closePath();ctx.stroke();}
+    else ctx.strokeRect(x1,y1,x2-x1,y2-y1);ctx.setLineDash([]);
     const label=String(it.label).slice(0,22);
     const tw=ctx.measureText(label).width+14,th=Math.max(20,Math.round(w/34));
     const ly=Math.max(0,y1-th);
@@ -512,61 +610,66 @@ function toggleLive(){
 }
 async function loop(){
   if(!state.live)return;
-  if(!document.hidden)await analyze('');
-  state.liveTimer=setTimeout(loop,2600);
+  const generation=workflow.generation;
+  if(!document.hidden)await analyze(workflow.mode==='SEARCH'?workflow.query:'');
+  if(state.live&&generation===workflow.generation)state.liveTimer=setTimeout(loop,options.frame_interval);
 }
 document.addEventListener('visibilitychange',()=>{ // save battery / mic when backgrounded
   if(document.hidden)speechSynthesis.cancel();
 });
 
 /* ---------- outdoor navigation ---------- */
-function navigateTo(dest){            // voice path: straight to GPS + Maps
-  if(!dest){speak('Please say a destination.');return;}
-  // AV-6 is an indoor schema with no vehicle classes, so it cannot see a car.
-  // Maps navigation unloads this page anyway; say so rather than go quiet.
-  // Tested against 'coco', not against a schema NAME: the name carries the class
-  // count (av7 -> av6 when signboard was retired), so matching it hardcoded a
-  // value that goes stale every time the vocabulary changes -- and the warning
-  // silently stopped appearing the last time it did.
-  const indoorOnly=(state.schema&&state.schema!=='coco')?
-    'Note: obstacle detection is indoor only and does not detect vehicles. ':'';
-  speak(indoorOnly+'Getting your location for directions to '+dest);
-  const open=url=>{location.href=url;};   // window.open is popup-blocked from voice callbacks
-  navigator.geolocation.getCurrentPosition(
-    async pos=>{const{latitude:la,longitude:lo}=pos.coords;
-      const url=`https://www.google.com/maps/dir/?api=1&origin=${la},${lo}&destination=${encodeURIComponent(dest)}&travelmode=walking&dir_action=navigate`;
-      // rough spoken ETA before Maps takes over: geocode via OpenStreetMap,
-      // straight-line distance x1.3 street factor, 4.5 km/h walking pace.
-      // "roughly/about" on purpose - Maps owns the precise turn-by-turn.
-      let eta='';
-      try{
-        const g=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1'
-            +`&q=${encodeURIComponent(dest)}&viewbox=${lo-0.25},${la+0.25},${lo+0.25},${la-0.25}`,
-          {signal:AbortSignal.timeout(6000)}).then(r=>r.json());
-        if(g&&g[0]){
-          const toR=x=>x*Math.PI/180,gla=parseFloat(g[0].lat),glo=parseFloat(g[0].lon);
-          const a=Math.sin(toR(gla-la)/2)**2
-                 +Math.cos(toR(la))*Math.cos(toR(gla))*Math.sin(toR(glo-lo)/2)**2;
-          const km=2*6371*Math.asin(Math.sqrt(a))*1.3;
-          const mins=Math.max(1,Math.round(km/4.5*60));
-          const distTxt=km<1?(Math.max(50,Math.round(km*1000/50)*50)+' meters')
-                            :(km.toFixed(1)+' kilometers');
-          eta=`${dest} is roughly ${distTxt} away, about ${mins} minute${mins>1?'s':''} on foot. `;
-        }
-      }catch(e){}
-      speak(eta+'Opening Google Maps walking directions to '+dest+'.',
-            {then:()=>open(url)});},
-    ()=>{speak('Location unavailable. Opening maps without your position.',
-            {then:()=>open('https://www.google.com/maps/dir/?api=1&destination='
-              +encodeURIComponent(dest)+'&travelmode=walking')});},
-    {enableHighAccuracy:true,timeout:8000});
+async function navigateTo(dest){
+  if(!dest)return;
+  const generation=workflow.generation;
+  speak('Getting your location.');
+  let coords={};
+  if(navigator.geolocation)coords=await new Promise(resolve=>navigator.geolocation.getCurrentPosition(
+    p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude}),()=>resolve({}),
+    {enableHighAccuracy:true,timeout:8000}));
+  if(generation!==workflow.generation)return;
+  let route;
+  try{
+    const r=await fetch('/api/navigation',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({destination:dest,...coords}),signal:AbortSignal.timeout(10000)});
+    if(!r.ok)throw new Error('Routing unavailable');route=await r.json();
+  }catch(e){route={maps_url:'https://www.google.com/maps/dir/?api=1&travelmode=walking&destination='+encodeURIComponent(dest),
+      speech:'Route distance and travel time are unavailable locally. Open Google Maps for directions.'};}
+  if(generation!==workflow.generation)return;
+  // The offline provider resolves no distance, but "how far and how long on
+  // foot" is the answer the user actually asked for. When the server could
+  // not supply it and we know where we are, estimate it here: geocode with
+  // OpenStreetMap, straight-line distance x1.3 for street routing, 4.5 km/h.
+  // Deliberately hedged ("roughly"/"about") - Maps still owns turn-by-turn.
+  if(route.distance_m==null&&coords.latitude!=null){
+    try{
+      const {latitude:la,longitude:lo}=coords;
+      const g=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1'
+          +`&q=${encodeURIComponent(dest)}&viewbox=${lo-0.25},${la+0.25},${lo+0.25},${la-0.25}`,
+        {signal:AbortSignal.timeout(6000)}).then(r=>r.json());
+      if(generation!==workflow.generation)return;
+      if(g&&g[0]){
+        const toR=x=>x*Math.PI/180,gla=parseFloat(g[0].lat),glo=parseFloat(g[0].lon);
+        const a=Math.sin(toR(gla-la)/2)**2
+               +Math.cos(toR(la))*Math.cos(toR(gla))*Math.sin(toR(glo-lo)/2)**2;
+        const km=2*6371*Math.asin(Math.sqrt(a))*1.3;
+        const mins=Math.max(1,Math.round(km/4.5*60));
+        const distTxt=km<1?(Math.max(50,Math.round(km*1000/50)*50)+' meters')
+                          :(km.toFixed(1)+' kilometers');
+        route.speech=`${dest} is roughly ${distTxt} away, about ${mins} minute${mins>1?'s':''} on foot. `
+                     +'Open Google Maps for walking directions.';
+      }
+    }catch(e){}
+  }
+  $('mapLink').href=route.maps_url;$('mapLink').hidden=false;
+  speak((coords.latitude===undefined?'Location unavailable. ':'')+route.speech);$('mapLink').focus();
 }
 function openNav(prefill=''){
   $('navSheet').classList.add('open');
   if(prefill)$('dest').value=prefill;
   $('dest').focus();
 }
-$('navBtn').onclick=()=>openNav();
+$('navBtn').onclick=()=>selectMode('NAVIGATION');
 $('navClose').onclick=()=>$('navSheet').classList.remove('open');
 $('dest').addEventListener('keydown',e=>{if(e.key==='Enter')$('navGo').click();});
 $('navGo').onclick=()=>{
@@ -578,6 +681,7 @@ $('navGo').onclick=()=>{
 
 /* ---------- wiring ---------- */
 function closeApp(){
+  workflow.transition('STOPPED');activeRequest?.abort();announcements.clear();
   state.live=false;clearTimeout(state.liveTimer);clearInterval(state.healthTimer);
   state.cmd=false;pauseCmdRec();
   try{video.srcObject&&video.srcObject.getTracks().forEach(t=>t.stop());}catch(e){}
@@ -590,14 +694,14 @@ function closeApp(){
   setTimeout(()=>{try{window.close();}catch(e){}},2500);
 }
 $('closeBtn').onclick=closeApp;
-liveBtn.onclick=toggleLive;
+liveBtn.onclick=()=>selectMode(state.live?'STOPPED':'ENVIRONMENT');
 voiceBtn.onclick=toggleCmd;
-$('scanOnce').onclick=()=>analyze('');
+$('scanOnce').onclick=()=>selectMode('ENVIRONMENT');
 $('stage').addEventListener('keydown',e=>{
   if(e.key==='Enter'||e.key===' '){e.preventDefault();$('stage').click();}});
 $('stage').addEventListener('click',()=>{
   if(calib){calib=false;runCalibration();return;}
-  if(state.ready&&!state.live&&!state.busy){buzz(30);analyze('');}
+  if(state.ready&&!state.live&&!state.busy){buzz(30);selectMode('ENVIRONMENT');}
 });
 function startCalibration(){
   if(!state.ready){speak('Please wait, the server is still loading.');return;}
@@ -621,15 +725,15 @@ async function runCalibration(){
     let nv=2*Math.atan(Math.tan(old*Math.PI/360)*(TRUE_STEPS/est))*180/Math.PI;
     nv=Math.max(30,Math.min(80,nv));
     VFOV=nv;try{localStorage.setItem('av_vfov',String(nv));}catch(e){}
-    speak('Calibration done. The chair read '+est+' steps, corrected to four. Field of view set to '+Math.round(nv)+' degrees. Distances will now be more accurate on this phone.');
+    speak('Calibration done. The chair read '+est+' steps, corrected to four. Field of view set to '+Math.round(nv)+' degrees. This is an approximate calibration; verify it against measured distances.');
     setStatus('Calibrated · FOV '+Math.round(nv)+'°','ok');
   }catch(e){speak('Calibration failed. Please try again.');}
 }
 $('calibChip').onclick=startCalibration;
-document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{
-  speak('Searching for '+c.dataset.k);setTimeout(()=>analyze(c.dataset.k),400);});
+document.querySelectorAll('.chip[data-k]').forEach(c=>c.onclick=()=>{
+  selectMode('SEARCH',c.dataset.k);});
 
-const WELCOME="Welcome to the Assistive Vision App. I am here to help you navigate safely. You can start by saying 'Start Scanning' or by pressing the Start button.";
+const WELCOME="Welcome to Assistive Vision System. Please say Start to continue.";
 window.addEventListener('load',()=>{sayWelcome();}); // routes through the `welcomed` guard so the greeting can't play twice
 let gateArmed=false,gateRec=null,autoLiveWanted=false;
 function armGate(){
@@ -644,7 +748,7 @@ function armGate(){
       const q=e.results[e.results.length-1][0].transcript.toLowerCase();
       // voice start = the user asked for scanning, not just the app shell:
       // begin live assist as soon as the server reports ready
-      if(/start/.test(q)){autoLiveWanted=true;try{gateRec.abort();}catch(_){};startApp();}
+      if(/(start|begin)/.test(q)){autoLiveWanted=true;try{gateRec.abort();}catch(_){};startApp();}
     };
     gateRec.onerror=e=>{
       if(e.error==='not-allowed'){gateArmed=false;
@@ -665,23 +769,58 @@ function primeTTS(){ // iOS: first synthesis must be primed inside a gesture
 function sayWelcome(){if(welcomed)return;welcomed=true;primeTTS();
   setTimeout(()=>speak(WELCOME,{resumeCmd:false}),120);}
 async function startApp(){
-  sayWelcome();
   gateArmed=false;try{gateRec&&gateRec.abort();}catch(_){}
-  const b=$('startBtn');if(b){b.disabled=true;b.textContent='Starting…';}
-  try{
-    await startCamera();
-    $('gate').remove();$('app').style.visibility='visible';
-    speak("Welcome to the Assistive Vision App. I am here to help you navigate safely. You can start by saying 'Start Scanning' or by pressing the yellow button.",{resumeCmd:true});
-    state.cmd=true;syncVoiceBtn();setTimeout(startCmdRec,300);   // hands-free from here on
-    await pollHealth();
-    if(!state.ready)state.healthTimer=setInterval(pollHealth,4000);
-  }catch(err){
-    if(b){b.disabled=false;b.textContent='▶  START';}
-    speak('Camera failed. Please allow camera permission and try again.');
-    alert('Camera failed: '+err.message+'\n\nOpen this page over HTTPS and allow camera permission.');
-  }
+  $('gate')?.remove();$('app').style.visibility='visible';state.cmd=!!SR;syncVoiceBtn();
+  selectMode('MAIN_MENU');await pollHealth();
+  if(!state.ready)state.healthTimer=setInterval(pollHealth,4000);
 }
 $('startBtn').onclick=startApp;
+
+function updateComponentStatus(d=null){
+  if(d)state.lastResult=d;else d=state.live?state.lastResult:null;
+  $('componentStatus').textContent='Camera: '+(video.srcObject?.getTracks().some(t=>t.readyState==='live')?'on':'off')+
+    '. Microphone: '+(state.recActive?'listening':state.cmd?'waiting':SR?'off':'unavailable')+
+    '. Detection: '+(d?.component_errors?.length?'partially unavailable':state.live?'scanning':'idle')+
+    '. OCR: '+(d?.ocr_active?'active':'idle')+'.';
+}
+async function selectMode(mode,query=''){
+  state.live=false;clearTimeout(state.liveTimer);activeRequest?.abort();announcements.clear();speechSynthesis.cancel();
+  workflow.transition(mode,query);const generation=workflow.generation;
+  SID=crypto.randomUUID?crypto.randomUUID():Math.random().toString(36).slice(2);
+  state.lastResult=null;
+  video.srcObject?.getTracks().forEach(t=>t.stop());video.srcObject=null;
+  $('modeChoices').hidden=mode!=='MAIN_MENU';$('queryForm').hidden=!['SEARCH','NAVIGATION'].includes(mode);
+  $('mapLink').hidden=true;$('queryInput').value=query;
+  const visual=['ENVIRONMENT','SEARCH'].includes(mode);$('stage').hidden=!visual;$('controls').hidden=!visual;
+  $('modeStatus').textContent={MAIN_MENU:'Choose assistance',ENVIRONMENT:'Environment Summary',SEARCH:'Keyword Search',NAVIGATION:'Navigation',STOPPED:'Assistance stopped'}[mode]||mode;
+  liveBtn.classList.remove('on');liveBtn.querySelector('span').textContent='Start live assist';
+  if(mode==='STOPPED'){state.cmd=false;pauseCmdRec();syncVoiceBtn();speak('Stopped. Camera and microphone are off.',{resumeCmd:false});updateComponentStatus();return;}
+  if(mode==='MAIN_MENU'){speak('Please select the assistance mode. Say one for environment summary, two for keyword search, or three for navigation.');document.querySelector('#modeChoices button')?.focus();updateComponentStatus();return;}
+  if(mode==='NAVIGATION'){$('queryLabel').textContent='Where would you like to go?';if(query)navigateTo(query);else {speak('Where would you like to go?');$('queryInput').focus();}updateComponentStatus();return;}
+  $('queryLabel').textContent='What would you like me to find?';
+  if(mode==='SEARCH'&&!query){speak('What would you like me to find?');$('queryInput').focus();updateComponentStatus();return;}
+  try{
+    await startCamera(generation);
+    if(generation!==workflow.generation)return;
+    state.live=true;liveBtn.classList.add('on');liveBtn.querySelector('span').textContent='Stop live assist';
+    speak(mode==='SEARCH'?'Searching for '+query:'Scanning your surroundings.');loop();
+  }catch(e){if(generation!==workflow.generation)return;speak('Camera permission is required for visual assistance. Use HTTPS and allow camera access in browser settings, then choose the mode again.');}
+  updateComponentStatus();
+}
+function enqueueSpeech(text,priority){
+  if(announcements.push(text,priority)&&priority<=1){speechSynthesis.cancel();drainSpeech();}
+}
+function drainSpeech(){
+  if(speechSynthesis.speaking)return;
+  const next=announcements.take();if(next&&$('transcript'))speak(next.text,{interrupt:false});
+}
+setInterval(drainSpeech,300);
+setInterval(()=>{if($('componentStatus'))updateComponentStatus();},1500);
+document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>selectMode(b.dataset.mode));
+$('menuBtn').onclick=()=>selectMode('MAIN_MENU');$('stopAll').onclick=()=>selectMode('STOPPED');
+$('queryForm').onsubmit=e=>{e.preventDefault();const query=$('queryInput').value.trim();if(query)selectMode(workflow.mode,query);};
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&state.live)selectMode('STOPPED');});
+window.addEventListener('pagehide',()=>{activeRequest?.abort();video.srcObject?.getTracks().forEach(t=>t.stop());pauseCmdRec();});
 </script>
 </body>
 </html>

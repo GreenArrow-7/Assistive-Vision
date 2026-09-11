@@ -11,6 +11,11 @@ import threading
 import time
 import traceback
 import uuid
+import logging
+from typing import Literal
+from .navigation import NavigationRequest, MapsHandoffProvider
+from .interfaces import LocalTextDetector, LocalObjectDetector
+from .upload_limit import UploadLimit
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -22,7 +27,15 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from . import (classes_av, config, detector, priority, spatial, symbols,
                text_pipeline)
 
-VERSION = "1.7"
+VERSION = "1.8"
+logger = logging.getLogger("assistive_vision")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter('%(asctime)s level=%(levelname)s %(message)s'))
+    logger.addHandler(handler)
+object_provider = LocalObjectDetector()
+text_provider = LocalTextDetector()
 WEB = Path(__file__).resolve().parent.parent / "web" / "index.html"
 
 # ML models are not thread-safe; serialize inference.
@@ -63,16 +76,20 @@ _rate_lock = threading.Lock()
 # ---------------------------------------------------------------- warmup
 def _warmup():
     _state["warming"] = True
-    try:
-        detector._get_model()          # downloads yolov8n.pt on first run
-        text_pipeline._get_reader()    # downloads EasyOCR en models
-        text_pipeline._get_obb()       # optional fine-tuned text model
-        _state["ready"] = True
-    except Exception as e:  # pragma: no cover
-        _state["error"] = f"{type(e).__name__}: {e}"
-        traceback.print_exc()
-    finally:
-        _state["warming"] = False
+    failures = {}
+    for name, loader in (("objects", detector._get_model), ("ocr", text_pipeline._get_reader),
+                         ("oriented_text", text_pipeline._get_obb)):
+        try:
+            loader()
+        except Exception:
+            failures[name] = "Unavailable. Check model configuration and server logs."
+            logger.exception("model_load_failed component=%s", name)
+    _state["components"] = failures
+    _state["ready"] = len(failures) < 3 and not ("objects" in failures and "ocr" in failures)
+    _state["error"] = None if _state["ready"] else "Vision models unavailable."
+    _state["warming"] = False
+    logger.info("startup ready=%s unavailable=%s", _state["ready"], list(failures))
+
 
 
 @asynccontextmanager
@@ -82,6 +99,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Assistive Vision API", version=VERSION, lifespan=lifespan)
+app.add_middleware(UploadLimit, max_bytes=MAX_UPLOAD_BYTES)
 
 
 # ---------------------------------------------------------------- misc
@@ -128,7 +146,7 @@ async def rate_limit(request: Request, call_next):
     served by this same app (`API = location.origin`), so it is same-origin and
     never needed them — they only let third-party sites spend our CPU.
     """
-    if request.url.path == "/analyze":
+    if request.url.path in {"/analyze", "/api/analyze/frame", "/api/search", "/api/environment", "/api/detect/text", "/api/detect/objects"}:
         # ponytail: X-Forwarded-For is spoofable when not behind a proxy. This
         # deploys behind HF Spaces / cloudflared, which both set it; keying on
         # request.client.host there would bucket every user into one counter.
@@ -167,11 +185,17 @@ def index():
     return FileResponse(WEB)
 
 
+@app.get("/workflow.js")
+def workflow_script():
+    return FileResponse(WEB.parent / "workflow.js", media_type="application/javascript")
+
+
 @app.get("/favicon.ico")
 def favicon():
     return Response(status_code=204)
 
 
+@app.get("/api/health")
 @app.get("/health")
 def health():
     try:
@@ -183,8 +207,8 @@ def health():
         "version": VERSION,
         "ready": _state["ready"],
         "warming": _state["warming"],
-        "error": _state["error"],
-        "object_model": config.OBJECT_MODEL,
+        "error": "Vision models unavailable. Check server logs." if _state["error"] else None,
+        "object_model": Path(config.OBJECT_MODEL_CUSTOM if detector.active_schema() == detector.SCHEMA_AV else config.OBJECT_MODEL).name,
         # the schema the loaded model actually speaks, not which file was found:
         # "av7" | "coco" | null (not loaded). A model whose classes match
         # neither is refused at warmup and surfaces here as an "error".
@@ -199,6 +223,7 @@ def health():
                            and classes_av.CRITICAL_ACTIVE),
         "dormant_hazards": sorted(classes_av.DORMANT_HAZARDS),
         "text_obb": obb,
+        "components": _state.get("components", {}),
     }
     # 503 on a failed warmup. A 200 here told the orchestrator the container was
     # healthy, so a worker whose models never loaded — and which therefore 503s
@@ -266,7 +291,8 @@ def _confirm(session: str, items):
     """
     now = time.time()
     with _sessions_lock:
-        prev = _sessions.get(session, {}).get("items", [])
+        prior = _sessions.get(session, {})
+        prev = prior.get("items", []) if now - prior.get("ts", 0) < SESSION_TTL_S else []
         _sessions[session] = {"items": [(i["label"], i["box"]) for i in items],
                               "ts": now}
         _evict_locked(now)
@@ -279,8 +305,7 @@ def _confirm(session: str, items):
 
 def _ocr_due(gate: str) -> bool:
     """Live-mode OCR gate. EasyOCR is the dominant per-frame cost, so between
-    keyword searches we run it every OCR_EVERY_N frames and reuse the previous
-    result; object/hazard detection still runs on every frame."""
+    keyword searches we run it every OCR_EVERY_N frames; object/hazard detection still runs on every frame."""
     now = time.time()
     with _sessions_lock:
         st = _sessions.setdefault(gate, {"n": 0, "texts": [], "ts": now})
@@ -292,12 +317,17 @@ def _ocr_due(gate: str) -> bool:
 
 # NOTE: sync def on purpose — FastAPI runs it in a worker thread, so the
 # blocking ML inference never freezes the event loop / health endpoint.
+@app.post("/api/analyze/frame")
+@app.post("/api/search")
+@app.post("/api/environment")
+@app.post("/api/detect/text")
+@app.post("/api/detect/objects")
 @app.post("/analyze")
-def analyze(frame: UploadFile = File(...), keyword: str = Form(""),
-            mode: str = Form("single"), session: str = Form(""),
-            pitch: float = Form(0.0), vfov: float = Form(0.0)):
+def analyze(frame: UploadFile = File(...), keyword: str = Form("", max_length=200),
+            mode: Literal["single", "live"] = Form("single"), session: str = Form(""),
+            pitch: float = Form(0.0, ge=-90, le=90), vfov: float = Form(0.0, ge=0, le=90)):
     if not _state["ready"]:
-        msg = ("AI models failed to load: " + _state["error"]) if _state["error"] \
+        msg = "AI models failed to load. Check server logs." if _state["error"] \
             else "AI models are still loading on the server. Please wait."
         return JSONResponse({"error": msg, "warming": _state["warming"]},
                             status_code=503)
@@ -310,6 +340,15 @@ def analyze(frame: UploadFile = File(...), keyword: str = Form(""),
         return JSONResponse(
             {"error": f"Frame too large (limit {MAX_UPLOAD_BYTES // 1024} KB)."},
             status_code=413)
+    # Reject decompression bombs before OpenCV allocates the decoded image.
+    from PIL import Image
+    from io import BytesIO
+    try:
+        with Image.open(BytesIO(raw)) as header:
+            if header.width * header.height > 20_000_000:
+                return JSONResponse({"error": "Image dimensions too large."}, status_code=413)
+    except Exception:
+        return JSONResponse({"error": "Could not decode image."}, status_code=400)
     img = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
     if img is None:
         return JSONResponse({"error": "Could not decode image."}, status_code=400)
@@ -350,19 +389,23 @@ def analyze(frame: UploadFile = File(...), keyword: str = Form(""),
             {"error": "Server busy, try again in a moment.", "busy": True},
             status_code=503, headers={"Retry-After": "2"})
     try:  # models are not thread-safe
-        objects, hazards = detector.detect_objects(img)
+        component_errors = []
+        try:
+            objects, hazards = object_provider.detect(img)
+        except Exception:
+            logger.exception("object_inference_failed")
+            objects, hazards = [], []
+            component_errors.append("Object detection unavailable; obstacle warnings may be missing.")
+        texts = []
         if run_ocr:
-            texts = text_pipeline.detect_text(img)
-        else:
-            with _sessions_lock:
-                texts = list(_sessions.get(gate, {}).get("texts", []))
+            try:
+                texts = text_provider.detect(img)
+            except Exception:
+                logger.exception("ocr_inference_failed")
+                component_errors.append("Text recognition unavailable.")
+        # Never reuse old-frame text coordinates after the camera moves.
     finally:
         _infer_lock.release()
-    if live_idle and run_ocr:
-        with _sessions_lock:
-            st = _sessions.get(gate)
-            if st is not None:      # a concurrent _confirm may have evicted it
-                st["texts"] = texts
 
     pitch = max(-10.0, min(70.0, pitch))
     vf = vfov if 25.0 <= vfov <= 90.0 else None
@@ -377,11 +420,14 @@ def analyze(frame: UploadFile = File(...), keyword: str = Form(""),
         + symbols.symbols_from_texts(texts)
 
     kw = symbols.clean_query(keyword)
-    # search hazards too: a chair close enough to be a hazard is still the
-    # chair the user asked for. Passing only `objects` produced the
-    # self-contradicting "Caution. bicycle five steps on your right.
-    # bicycle not found in the current view." (field test 2026-09-08)
-    match = symbols.match_keyword(kw, texts, syms, close_hz + objects) if kw else None
+    # NOTE: the keyword search below runs over `speak_obj + speak_hz`, so it
+    # searches hazards as well as objects. That is deliberate and load-bearing:
+    # searching only the object pool produced the self-contradicting "Caution.
+    # bicycle five steps on your right. bicycle not found in the current view."
+    # (field test 2026-09-08).
+    speak_texts = texts
+    if mode == "live" and session and run_ocr:
+        speak_texts = _confirm(session + ":t", texts)
 
     # live mode: alarms need corroboration, descriptions do not. An
     # interrupting hazard is double-checked across two consecutive frames —
@@ -400,12 +446,22 @@ def analyze(frame: UploadFile = File(...), keyword: str = Form(""),
     else:
         speak_hz, speak_obj = close_hz, objects
 
-    out = priority.build_speech(speak_hz, speak_obj, texts, syms, kw or None, match)
+    speak_syms = symbols.symbols_from_objects(speak_obj + speak_hz) + symbols.symbols_from_texts(speak_texts)
+    match = symbols.match_keyword(kw, speak_texts, speak_syms, speak_obj + speak_hz) if kw else None
+    out = priority.build_speech(speak_hz, speak_obj, speak_texts, speak_syms, kw or None, match)
+    speech_priority = 0 if out["speech"].startswith("Warning!") else (1 if out["hazard_count"] else 2 if match else 3)
+    if component_errors:
+        out["speech"] = " ".join(component_errors) + " " + out["speech"]
+    logger.info("frame_analyzed ms=%d objects=%d texts=%d errors=%d",
+                (time.time()-t0)*1000, len(objects)+len(close_hz), len(texts), len(component_errors))
 
     return {
         "speech": out["speech"],
         "hazard_count": out["hazard_count"],
         "blur": False,
+        "component_errors": component_errors,
+        "ocr_active": run_ocr and not any("Text" in e for e in component_errors),
+        "priority": speech_priority,
         "keyword": kw,
         "match": _pub([match])[0] if match else None,
         "hazards": _pub(close_hz),
@@ -415,6 +471,17 @@ def analyze(frame: UploadFile = File(...), keyword: str = Form(""),
         "frame": {"w": w, "h": h},
         "ms": round((time.time() - t0) * 1000),
     }
+
+
+@app.get("/api/config")
+def client_config():
+    return {"frame_interval": config.FRAME_INTERVAL,
+            "announcement_cooldown": config.ANNOUNCEMENT_COOLDOWN * 1000,
+            "tts_rate": config.TTS_RATE, "language": config.LANGUAGE}
+
+@app.post("/api/navigation")
+def navigate(request: NavigationRequest):
+    return MapsHandoffProvider().route(request.destination, request.latitude, request.longitude)
 
 
 if __name__ == "__main__":  # python -m server.main

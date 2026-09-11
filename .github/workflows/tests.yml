@@ -14,3 +14,8 @@ jobs:
       - run: pip install torch==2.13.0 torchvision==0.28.0 --index-url https://download.pytorch.org/whl/cpu
       - run: pip install -r requirements-dev.txt
       - run: python -m pytest tests/ -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: node --test --test-isolation=none tests/test_workflow.cjs

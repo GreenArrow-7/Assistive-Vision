@@ -9,3 +9,5 @@ opencv-python-headless==5.0.0.93
 numpy==2.4.4
 ultralytics==8.4.95         # YOLOv8 (objects/obstacles) + OBB support
 easyocr==1.7.2              # text detection (CRAFT) + recognition
+
+pillow==12.2.0              # bounded image header inspection

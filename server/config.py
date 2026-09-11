@@ -131,3 +131,37 @@ CLASS_CONF = {
     "person": 0.40, "bed": 0.60, "couch": 0.58, "dog": 0.55, "cat": 0.55,
     "handbag": 0.55, "backpack": 0.55, "tv": 0.55,
 }
+
+
+# Environment overrides are read at process startup. Uvicorn --env-file loads .env.
+import os
+
+def _number(name, default, low, high, integer=False):
+    value = float(os.getenv(name, str(default)))
+    if not low <= value <= high:
+        raise ValueError(f"{name} must be between {low} and {high}")
+    return int(value) if integer else value
+
+OBJECT_MODEL = os.getenv("OBJECT_MODEL_PATH", OBJECT_MODEL)
+OBJECT_MODEL_CUSTOM = os.getenv("CUSTOM_OBJECT_MODEL_PATH", OBJECT_MODEL_CUSTOM)
+TEXT_OBB_MODEL = os.getenv("TEXT_MODEL_PATH", TEXT_OBB_MODEL)
+OCR_LANGS = os.getenv("OCR_LANGUAGES", "en").split(",")
+OCR_GPU = os.getenv("OCR_GPU", "false").lower() == "true"
+DEVICE = os.getenv("DEVICE", "cpu")
+OBJ_CONF = _number("CONFIDENCE_THRESHOLD", OBJ_CONF, .01, 1)
+TEXT_CONF = _number("TEXT_CONFIDENCE_THRESHOLD", TEXT_CONF, .01, 1)
+IMAGE_SIZE = _number("IMAGE_SIZE", 640, 320, 1280, True)
+NMS_THRESHOLD = _number("NMS_THRESHOLD", .5, .05, .95)
+OCR_EVERY_N = _number("OCR_INTERVAL", OCR_EVERY_N, 1, 30, True)
+FRAME_INTERVAL = _number("FRAME_INTERVAL", 2600, 500, 30000, True)
+ANNOUNCEMENT_COOLDOWN = _number("ANNOUNCEMENT_COOLDOWN", 9, 1, 120)
+STEP_LENGTH_M = _number("STEP_LENGTH", STEP_LENGTH_M, .2, 1.5)
+CAMERA_HEIGHT_M = _number("CAMERA_HEIGHT", CAMERA_HEIGHT_M, .3, 2.5)
+CAMERA_VFOV_DEG = _number("CAMERA_VFOV", CAMERA_VFOV_DEG, 25, 90)
+MAX_ANNOUNCE = _number("MAX_ANNOUNCE", 3, 1, 6, True)
+TTS_RATE = _number("TTS_RATE", 1.05, .5, 2)
+LANGUAGE = os.getenv("LANGUAGE", "en-IN")
+# Only these classes can plausibly supply a floor contact point.
+GROUND_CLASSES = {"person", "chair", "table", "dining table", "door", "dustbin",
+                  "car", "bus", "truck", "bicycle", "motorcycle", "bench", "couch",
+                  "sink", "toilet", "refrigerator", "pole", "potted plant"}

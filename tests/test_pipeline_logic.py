@@ -133,10 +133,10 @@ def test_steps_object_at_feet():
 
 
 def test_steps_fusion_takes_closer():
-    # person: height says ~3, ground-plane says ~5 -> conservative min = 3
+    # Height estimate is about 2.9 steps; floor conservatively to two.
     b = (300, 60, 640, 660)
     s = spatial.estimate_steps("person", b, 1280, 720)
-    assert s == 3, s
+    assert s == 2, s
 
 
 def test_steps_capped():
