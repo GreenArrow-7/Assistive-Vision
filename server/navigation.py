@@ -36,20 +36,28 @@ class NavigationRequest(BaseModel):
         return self
 
 
-def geocode(query: str, latitude=None, longitude=None, timeout=GEOCODE_TIMEOUT_S):
-    """(lat, lon) of the best Nominatim hit, biased toward the user, or None."""
-    params = {"format": "json", "limit": 1, "q": query}
-    if latitude is not None and longitude is not None:
-        # prefer results near the user without EXCLUDING far ones (bounded=0)
-        params["viewbox"] = f"{longitude - 0.5},{latitude + 0.5},{longitude + 0.5},{latitude - 0.5}"
-        params["bounded"] = 0
+def _nominatim(params, timeout):
     req = urllib.request.Request(NOMINATIM + "?" + urllib.parse.urlencode(params),
                                  headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         data = json.load(r)
-    if not data:
-        return None
-    return float(data[0]["lat"]), float(data[0]["lon"])
+    return (float(data[0]["lat"]), float(data[0]["lon"])) if data else None
+
+
+def geocode(query: str, latitude=None, longitude=None, timeout=GEOCODE_TIMEOUT_S):
+    """(lat, lon) of the best Nominatim hit, NEAREST FIRST, or None.
+
+    "city hospital" with a mere near-user bias returned the globally best
+    "City Hospital" — 10,945 km away — and we announced a walking time for it.
+    Search inside ~50 km of the user first; only if nothing is there, widen.
+    """
+    base = {"format": "json", "limit": 1, "q": query}
+    if latitude is not None and longitude is not None:
+        box = f"{longitude - 0.5},{latitude + 0.5},{longitude + 0.5},{latitude - 0.5}"
+        near = _nominatim({**base, "viewbox": box, "bounded": 1}, timeout)
+        if near:
+            return near
+    return _nominatim(base, timeout)
 
 
 def haversine_m(lat1, lon1, lat2, lon2) -> float:
@@ -59,11 +67,19 @@ def haversine_m(lat1, lon1, lat2, lon2) -> float:
     return 2 * 6371000 * math.asin(math.sqrt(a))
 
 
+WALKABLE_M = 100_000       # beyond this a walking time is meaningless
+
+
 def describe(destination: str, distance_m: float, duration_s: float) -> str:
     if distance_m < 1000:
         dist = f"{max(50, int(round(distance_m / 50.0)) * 50)} metres"
-    else:
+    elif distance_m < 10_000:
         dist = f"{distance_m / 1000:.1f} kilometres"
+    else:
+        dist = f"{int(round(distance_m / 1000))} kilometres"
+    if distance_m > WALKABLE_M:
+        return (f"{destination} is very far, about {dist} away. "
+                "Opening Google Maps for directions.")
     mins = max(1, int(round(duration_s / 60)))
     when = f"about {mins} minute{'s' if mins != 1 else ''} on foot"
     return (f"{destination} is approximately {dist} away, {when}. "

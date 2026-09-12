@@ -178,7 +178,7 @@ button:focus-visible,input:focus-visible,a:focus-visible{outline:4px solid #e8c3
 </head>
 <body>
 
-<div id="gate" role="dialog" aria-modal="true" aria-label="Start Assistive Vision" style="cursor:pointer">
+<div id="gate" role="dialog" aria-modal="true" aria-label="Start Assistive Vision">
   <div class="eye">👁</div>
   <h1>ASSISTIVE <b>VISION</b></h1>
   <p>Point your phone at the world. It reads signboards, spots obstacles, recognizes symbols, and speaks — hazards always first.</p>
@@ -187,7 +187,7 @@ button:focus-visible,input:focus-visible,a:focus-visible{outline:4px solid #e8c3
     <span>Symbols</span><span>Voice commands</span><span>GPS navigation</span>
   </div>
   <button id="startBtn">▶&nbsp; START</button>
-  <p id="gateHint" style="font-size:16px;color:var(--ink);font-weight:700">Tap once anywhere on the screen, then say <b style="color:var(--go)">“Start”</b>.</p>
+  <p id="gateHint" style="font-size:16px;color:var(--ink);font-weight:700">Press <b style="color:var(--go)">START</b>. Everything after that is controlled by your voice.</p>
   <p style="font-size:12px;color:var(--dim)">After start, everything is voice-controlled — say <b style="color:var(--ink)">Help</b> anytime.</p>
   <div class="foot">YOLO + EasyOCR pipeline · Priority voice guidance<br>Dept. of CSE, ATMECE Mysuru · 2025–26</div>
 </div>
@@ -214,7 +214,7 @@ button:focus-visible,input:focus-visible,a:focus-visible{outline:4px solid #e8c3
     <button id="repeatBtn">Repeat last instruction</button><button id="menuBtn">Back to main menu</button><button id="stopAll">Stop camera and microphone</button>
     <p>Visual assistance can miss hazards. Continue using your mobility aid.</p>
   </section>
-  <div id="stage" role="button" tabindex="0" aria-label="Camera view. Activate to scan the surroundings once.">
+  <div id="stage" aria-label="Camera view">
     <video id="video" autoplay playsinline muted></video>
     <canvas id="overlay"></canvas>
     <div class="zones" aria-hidden="true"><div></div><div></div><div></div></div>
@@ -354,7 +354,7 @@ function speak(text,{interrupt=true,liveDedupe=false,resumeCmd=true,then=null,on
   try{
     if(interrupt)speechSynthesis.cancel();
     ttsActive=true;
-    if(barge){bargeText=text;if(!state.recActive)resumeCmdRec();}   // keep listening: user may interrupt
+    if(barge){bargeText=text;if(!cmdRec)resumeCmdRec();}   // keep listening: user may interrupt
     else pauseCmdRec();                  // prompts that contain command words: mic off, no self-echo
     dbg('TTS start:',text.slice(0,60));
     const u=new SpeechSynthesisUtterance(text);
@@ -374,38 +374,61 @@ function speak(text,{interrupt=true,liveDedupe=false,resumeCmd=true,then=null,on
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
 const MENU_TEXT='Say one for environment summary. Two for keyword based search, for example say pharmacy. Three for navigation. Four for the home page. Five to stop scanning. You can say a number at any time.';
 const HELP_TEXT='Home menu: one, environment summary. Two, keyword search. Three, navigation. Four, home page. Five, stop. Anytime: find, followed by a place, like find washroom. navigate to, followed by a destination. distance and time. repeat. mute. unmute. help.';
-let cmdRec=null;
+let cmdRec=null,lastRecEvent=0;
+// ONE recogniser at a time, and `cmdRec` is the single source of truth. Every
+// handler checks it still owns the instance: a superseded recogniser's late
+// onend/onerror used to clobber state for the NEW one, leaving recActive stuck
+// true (resume no-ops forever = dead mic) or starting a second session.
 function startCmdRec(){
-  if(!SR||!state.cmd||state.recActive)return;
-  try{
-    cmdRec=new SR();
-    cmdRec.lang='en-IN';cmdRec.continuous=true;cmdRec.interimResults=false;
-    cmdRec.onresult=e=>{
-      const q=e.results[e.results.length-1][0].transcript.toLowerCase().trim();
-      if(micQuiet()){dbg('REC dropped (TTS quiet window):',q);return;}
-      if(bargeText&&AssistiveWorkflow.isEcho(q,bargeText)){dbg('REC echo dropped:',q);return;}
-      if(bargeText){dbg('REC barge-in over:',bargeText.slice(0,40));speechSynthesis.cancel();}
-      dbg('REC heard:',q);
-      if(q)handleCommand(q);
-    };
-    cmdRec.onerror=e=>{
-      dbg('REC error:',e.error);
-      state.recActive=false;
-      if(['not-allowed','service-not-allowed','audio-capture'].includes(e.error)){state.cmd=false;syncVoiceBtn();
-        setStatus('Mic blocked','err');
-        speak('Microphone permission is blocked. Voice commands are off.',{resumeCmd:false});}
-    };
-    cmdRec.onend=()=>{state.recActive=false;
-      if(state.cmd&&!ttsActive)setTimeout(startCmdRec,250);};
-    cmdRec.start();state.recActive=true;
-    setStatus(state.live?'Live · listening':'Listening for commands','ok');
-  }catch(e){state.recActive=false;}
+  if(!SR||!state.cmd||cmdRec)return;
+  let rec;
+  try{rec=new SR();}catch(e){dbg('REC ctor failed:',e);return;}
+  cmdRec=rec;state.recActive=true;lastRecEvent=Date.now();
+  rec.lang='en-IN';rec.continuous=true;rec.interimResults=false;
+  const mine=()=>rec===cmdRec;
+  const beat=()=>{if(mine())lastRecEvent=Date.now();};
+  rec.onstart=rec.onaudiostart=rec.onsoundstart=rec.onspeechstart=beat;
+  rec.onresult=e=>{
+    if(!mine())return;beat();
+    const q=e.results[e.results.length-1][0].transcript.toLowerCase().trim();
+    if(micQuiet()){dbg('REC dropped (TTS quiet window):',q);return;}
+    if(bargeText&&AssistiveWorkflow.isEcho(q,bargeText)){dbg('REC echo dropped:',q);return;}
+    if(bargeText){dbg('REC barge-in over:',bargeText.slice(0,40));speechSynthesis.cancel();}
+    dbg('REC heard:',q);
+    if(q)handleCommand(q);
+  };
+  rec.onerror=e=>{
+    if(!mine())return;dbg('REC error:',e.error);
+    if(['not-allowed','service-not-allowed','audio-capture'].includes(e.error)){
+      cmdRec=null;state.recActive=false;state.cmd=false;syncVoiceBtn();
+      setStatus('Mic blocked','err');
+      speak('Microphone permission is blocked. Voice commands are off.',{resumeCmd:false});}
+    // no-speech / aborted / network: onend follows and restarts
+  };
+  rec.onend=()=>{
+    if(!mine())return;cmdRec=null;state.recActive=false;dbg('REC ended');
+    // Android ends a "continuous" session after every result or ~10 s of
+    // silence: always come back, unless a mic-closed prompt is speaking (its
+    // own end event resumes us).
+    if(state.cmd&&!(ttsActive&&!bargeText))setTimeout(startCmdRec,400);
+  };
+  try{rec.start();}catch(e){dbg('REC start failed:',e);cmdRec=null;state.recActive=false;
+    if(state.cmd)setTimeout(startCmdRec,1000);return;}
+  dbg('REC started');
+  setStatus(state.live?'Live · listening':'Listening for commands','ok');
 }
-function pauseCmdRec(){try{if(cmdRec&&state.recActive){cmdRec.onend=null;cmdRec.abort();state.recActive=false;}}catch(e){}}
-function resumeCmdRec(){if(state.cmd&&!state.recActive){
-  if(cmdRec)cmdRec.onend=()=>{state.recActive=false;
-    if(state.cmd&&!ttsActive)setTimeout(startCmdRec,250);};
-  setTimeout(startCmdRec,150);}}
+function pauseCmdRec(){const old=cmdRec;cmdRec=null;state.recActive=false;
+  if(old){try{old.abort();}catch(e){}}}
+function resumeCmdRec(){if(state.cmd&&!cmdRec)setTimeout(startCmdRec,150);}
+// Heartbeat: a recogniser can die silently when TTS takes the audio focus on
+// Android. If voice is on and nothing is listening (or nothing has happened
+// for 25 s), bring it back — without waiting for an event that never comes.
+setInterval(()=>{
+  if(!state.cmd||!SR)return;
+  const blocked=ttsActive&&!bargeText;
+  if(!cmdRec&&!blocked){dbg('REC watchdog: restarting idle mic');startCmdRec();}
+  else if(cmdRec&&Date.now()-lastRecEvent>25000){dbg('REC watchdog: stale, recycling');pauseCmdRec();if(!blocked)startCmdRec();}
+},3000);
 function toggleCmd(){
   state.cmd=!state.cmd;syncVoiceBtn();
   if(state.cmd){speak('Voice commands on. Say help to hear the list.');startCmdRec();}
@@ -722,11 +745,10 @@ $('closeBtn').onclick=closeApp;
 liveBtn.onclick=()=>selectMode(state.live?'STOPPED':'ENVIRONMENT');
 voiceBtn.onclick=toggleCmd;
 $('scanOnce').onclick=()=>selectMode('ENVIRONMENT');
-$('stage').addEventListener('keydown',e=>{
-  if(e.key==='Enter'||e.key===' '){e.preventDefault();$('stage').click();}});
 $('stage').addEventListener('click',()=>{
-  if(calib){calib=false;runCalibration();return;}
-  if(state.ready&&!state.live&&!state.busy){buzz(30);selectMode('ENVIRONMENT');}
+  // Only completes an armed calibration. A tap here used to start scanning
+  // and speak — unexpected speech from an accidental touch.
+  if(calib){calib=false;runCalibration();}
 });
 function startCalibration(){
   if(!state.ready){speak('Please wait, the server is still loading.');return;}
@@ -758,43 +780,13 @@ $('calibChip').onclick=startCalibration;
 document.querySelectorAll('.chip[data-k]').forEach(c=>c.onclick=()=>{
   selectMode('SEARCH',c.dataset.k);});
 
-const WELCOME="Welcome to Assistive Vision. Tap once anywhere on the screen, then say Start to begin.";
-const GATE_ARMED="Microphone is on. Say Start to begin.";
+const WELCOME="Welcome to Assistive Vision. Press Start to begin.";
 window.addEventListener('load',()=>{sayWelcome();}); // routes through the `welcomed` guard so the greeting can't play twice
-let gateArmed=false,gateRec=null,autoLiveWanted=false;
-function armGate(){
-  if(gateArmed)return;gateArmed=true;
-  // Mobile browsers block speech before a gesture, so the load-time welcome
-  // is often silent; this tap is the first thing the user reliably hears.
-  if(welcomed)speak(GATE_ARMED,{resumeCmd:false});
-  else{WELCOME_AFTER_TAP=true;sayWelcome();}
-  // request iOS motion permission inside the gesture
-  if(window.DeviceOrientationEvent&&DeviceOrientationEvent.requestPermission){
-    DeviceOrientationEvent.requestPermission().catch(()=>{});}
-  if(SR){try{
-    gateRec=new SR();gateRec.lang='en-IN';gateRec.continuous=true;gateRec.interimResults=false;
-    gateRec.onresult=e=>{
-      // The welcome prompt itself says "start" — never act on our own TTS.
-      if(micQuiet()){dbg('GATE dropped (TTS quiet window)');return;}
-      const q=e.results[e.results.length-1][0].transcript.toLowerCase();
-      dbg('GATE heard:',q);
-      // voice start = the user asked for scanning, not just the app shell:
-      // begin live assist as soon as the server reports ready
-      if(/(start|begin)/.test(q)){autoLiveWanted=true;try{gateRec.abort();}catch(_){};startApp();}
-    };
-    gateRec.onerror=e=>{
-      if(e.error==='not-allowed'){gateArmed=false;
-        speak('Microphone is blocked, so voice start is unavailable. Please press the START button.',{resumeCmd:false});}
-    };
-    gateRec.onend=()=>{if(gateArmed&&document.getElementById('gate'))setTimeout(()=>{try{gateRec.start();}catch(_){}} ,300);};
-    gateRec.start();
-  }catch(e){}}
-}
-document.addEventListener('click',e=>{
-  const g=document.getElementById('gate');
-  if(g&&g.contains(e.target)&&e.target.id!=='startBtn')armGate();
-},true);
-let welcomed=false,WELCOME_AFTER_TAP=false;
+let autoLiveWanted=false;
+// The START button is the ONLY activation point. A tap-anywhere gate used to
+// speak on any click and opened a second microphone before START — the source
+// of "the AI talks when I touch the screen".
+let welcomed=false;
 function primeTTS(){ // iOS: first synthesis must be primed inside a gesture
   try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u);speechSynthesis.resume();}catch(e){}
 }
@@ -802,10 +794,11 @@ function sayWelcome(){if(welcomed)return;primeTTS();
   // Mark welcomed only when the utterance actually STARTS: the load-time
   // attempt is silently blocked by mobile autoplay policy, and burning the
   // guard there meant the first tap never spoke the welcome at all.
-  setTimeout(()=>speak(WELCOME_AFTER_TAP?'Welcome to Assistive Vision. '+GATE_ARMED:WELCOME,
-                       {resumeCmd:false,onstart:()=>{welcomed=true;}}),120);}
+  setTimeout(()=>speak(WELCOME,{resumeCmd:false,onstart:()=>{welcomed=true;}}),120);}
 async function startApp(){
-  gateArmed=false;try{gateRec&&gateRec.abort();}catch(_){}
+  primeTTS();                          // inside the START gesture: unlocks TTS on iOS/Android
+  if(window.DeviceOrientationEvent&&DeviceOrientationEvent.requestPermission){
+    DeviceOrientationEvent.requestPermission().catch(()=>{});}
   $('gate')?.remove();$('app').style.visibility='visible';state.cmd=!!SR;syncVoiceBtn();
   selectMode('MAIN_MENU','',{silent:true});
   speak('Starting Assistive Vision. Loading the vision models, please wait.');

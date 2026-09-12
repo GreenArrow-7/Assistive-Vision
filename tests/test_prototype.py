@@ -45,6 +45,10 @@ def test_navigation_fallback_and_validation(monkeypatch):
     assert r['resolved'] is True and 1200 < r['distance_m'] < 1700       # 1.1 km x 1.3
     assert abs(r['duration_s'] - r['distance_m']/(4.5*1000/3600)) <= 1   # 4.5 km/h walking
     assert r['speech'].startswith('City Hospital is approximately 1.') and 'minutes on foot' in r['speech']
+    # a hit on the other side of the world must not be given a walking time
+    monkeypatch.setattr(nav,'geocode',lambda q,la,lo,**k:(la+70.0,lo))     # ~7,800 km
+    far=client.post('/api/navigation',json={'destination':'City Hospital','latitude':12.2,'longitude':76.1}).json()
+    assert far['resolved'] is True and 'on foot' not in far['speech'] and 'very far' in far['speech']
     # geocoder raising must degrade the same way, not 500
     monkeypatch.setattr(nav,'geocode',lambda *a,**k:(_ for _ in ()).throw(OSError('offline')))
     assert client.post('/api/navigation',json={'destination':'X','latitude':1,'longitude':1}).json()['resolved'] is False
