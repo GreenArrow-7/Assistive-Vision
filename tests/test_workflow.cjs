@@ -11,6 +11,11 @@ test('welcome, modes, back, stop, repeat and natural commands',()=>{
   assert.deepEqual(w.command('take me to the pharmacy'),['NAVIGATION','the pharmacy']);
   w.transition('SEARCH');assert.deepEqual(w.command('washroom'),['SEARCH','washroom']);
 });
+test('numbered home menu: 4 = home, 5 = stop',()=>{
+  const w=new Workflow();w.transition('ENVIRONMENT');
+  for(const q of ['four','4','home','go back'])assert.deepEqual(w.command(q),['MAIN_MENU'],q);
+  for(const q of ['five','5','stop scanning'])assert.deepEqual(w.command(q),['STOPPED'],q);
+});
 test('voice start variants reach scanning, not just the menu',()=>{
   const w=new Workflow();
   for(const q of ['start scanning','start scan','begin scanning','scan'])

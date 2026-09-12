@@ -187,7 +187,7 @@ button:focus-visible,input:focus-visible,a:focus-visible{outline:4px solid #e8c3
     <span>Symbols</span><span>Voice commands</span><span>GPS navigation</span>
   </div>
   <button id="startBtn">▶&nbsp; START</button>
-  <p id="gateHint" style="font-size:13px;color:var(--dim)">Voice-first: tap <b style="color:var(--ink)">once anywhere</b> to switch the microphone on, then say <b style="color:var(--ink)">“Start Scanning”</b> — scanning begins by itself. Or simply press START.</p>
+  <p id="gateHint" style="font-size:16px;color:var(--ink);font-weight:700">Tap once anywhere on the screen, then say <b style="color:var(--go)">“Start”</b>.</p>
   <p style="font-size:12px;color:var(--dim)">After start, everything is voice-controlled — say <b style="color:var(--ink)">Help</b> anytime.</p>
   <div class="foot">YOLO + EasyOCR pipeline · Priority voice guidance<br>Dept. of CSE, ATMECE Mysuru · 2025–26</div>
 </div>
@@ -367,7 +367,8 @@ function speak(text,{interrupt=true,liveDedupe=false,resumeCmd=true,then=null,on
 
 /* ---------- continuous voice COMMAND engine ---------- */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-const HELP_TEXT='Available commands: start scanning. stop scanning. find, followed by a place, like find washroom. describe surroundings. navigate to, followed by a destination. how far is, followed by an object. repeat. mute. unmute. close app. calibrate. and help.';
+const MENU_TEXT='Home. Say one for environment summary. Two for keyword search, for example say pharmacy to search for a pharmacy. Three for navigation assistance. Four to return to the home page. Five to stop scanning.';
+const HELP_TEXT='Home menu: one, environment summary. Two, keyword search. Three, navigation. Four, home page. Five, stop. Anytime: find, followed by a place, like find washroom. navigate to, followed by a destination. distance and time. repeat. mute. unmute. help.';
 let cmdRec=null;
 function startCmdRec(){
   if(!SR||!state.cmd||state.recActive)return;
@@ -388,7 +389,7 @@ function startCmdRec(){
         speak('Microphone permission is blocked. Voice commands are off.',{resumeCmd:false});}
     };
     cmdRec.onend=()=>{state.recActive=false;
-      if(state.cmd&&!speechSynthesis.speaking)setTimeout(startCmdRec,250);};
+      if(state.cmd&&!ttsActive)setTimeout(startCmdRec,250);};
     cmdRec.start();state.recActive=true;
     setStatus(state.live?'Live · listening':'Listening for commands','ok');
   }catch(e){state.recActive=false;}
@@ -396,7 +397,7 @@ function startCmdRec(){
 function pauseCmdRec(){try{if(cmdRec&&state.recActive){cmdRec.onend=null;cmdRec.abort();state.recActive=false;}}catch(e){}}
 function resumeCmdRec(){if(state.cmd&&!state.recActive){
   if(cmdRec)cmdRec.onend=()=>{state.recActive=false;
-    if(state.cmd&&!speechSynthesis.speaking)setTimeout(startCmdRec,250);};
+    if(state.cmd&&!ttsActive)setTimeout(startCmdRec,250);};
   setTimeout(startCmdRec,150);}}
 function toggleCmd(){
   state.cmd=!state.cmd;syncVoiceBtn();
@@ -623,11 +624,14 @@ async function navigateTo(dest){
   state.lastDest=dest;                   // remembered for "distance and time"
   const generation=workflow.generation;
   speak('Getting your location.');
-  let coords={};
+  let coords={},locErr='';
   if(navigator.geolocation)coords=await new Promise(resolve=>navigator.geolocation.getCurrentPosition(
-    p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude}),()=>resolve({}),
+    p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude}),
+    e=>{locErr=e&&e.code===1?'Location permission is denied. ':e&&e.code===3?'Location timed out. ':'Location is unavailable. ';resolve({});},
     {enableHighAccuracy:true,timeout:8000}));
+  else locErr='Location is not supported on this device. ';
   if(generation!==workflow.generation)return;
+  dbg('NAV location:',coords.latitude!=null?'ok':locErr);
   let route;
   try{
     const r=await fetch('/api/navigation',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -666,7 +670,8 @@ async function navigateTo(dest){
   // non-gesture open; the focused link is the accessible fallback either way.
   let opened=null;
   try{opened=window.open(route.maps_url,'_blank','noopener');}catch(e){}
-  speak((coords.latitude===undefined?'Location unavailable. ':'')+route.speech
+  dbg('NAV route:',route.resolved?route.distance_m+'m':'unresolved',route.speech.slice(0,60));
+  speak(locErr+route.speech
         +(opened?'':' The Google Maps link is on screen. Tap it to open directions.'));
   $('mapLink').focus();
 }
@@ -739,12 +744,16 @@ $('calibChip').onclick=startCalibration;
 document.querySelectorAll('.chip[data-k]').forEach(c=>c.onclick=()=>{
   selectMode('SEARCH',c.dataset.k);});
 
-const WELCOME="Welcome to Assistive Vision System. Please say Start to continue.";
+const WELCOME="Welcome to Assistive Vision. Tap once anywhere on the screen, then say Start to begin.";
+const GATE_ARMED="Microphone is on. Say Start to begin.";
 window.addEventListener('load',()=>{sayWelcome();}); // routes through the `welcomed` guard so the greeting can't play twice
 let gateArmed=false,gateRec=null,autoLiveWanted=false;
 function armGate(){
   if(gateArmed)return;gateArmed=true;
-  sayWelcome();
+  // Mobile browsers block speech before a gesture, so the load-time welcome
+  // is often silent; this tap is the first thing the user reliably hears.
+  if(welcomed)speak(GATE_ARMED,{resumeCmd:false});
+  else{WELCOME_AFTER_TAP=true;sayWelcome();}
   // request iOS motion permission inside the gesture
   if(window.DeviceOrientationEvent&&DeviceOrientationEvent.requestPermission){
     DeviceOrientationEvent.requestPermission().catch(()=>{});}
@@ -771,7 +780,7 @@ document.addEventListener('click',e=>{
   const g=document.getElementById('gate');
   if(g&&g.contains(e.target)&&e.target.id!=='startBtn')armGate();
 },true);
-let welcomed=false;
+let welcomed=false,WELCOME_AFTER_TAP=false;
 function primeTTS(){ // iOS: first synthesis must be primed inside a gesture
   try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u);speechSynthesis.resume();}catch(e){}
 }
@@ -779,7 +788,8 @@ function sayWelcome(){if(welcomed)return;primeTTS();
   // Mark welcomed only when the utterance actually STARTS: the load-time
   // attempt is silently blocked by mobile autoplay policy, and burning the
   // guard there meant the first tap never spoke the welcome at all.
-  setTimeout(()=>speak(WELCOME,{resumeCmd:false,onstart:()=>{welcomed=true;}}),120);}
+  setTimeout(()=>speak(WELCOME_AFTER_TAP?'Welcome to Assistive Vision. '+GATE_ARMED:WELCOME,
+                       {resumeCmd:false,onstart:()=>{welcomed=true;}}),120);}
 async function startApp(){
   gateArmed=false;try{gateRec&&gateRec.abort();}catch(_){}
   $('gate')?.remove();$('app').style.visibility='visible';state.cmd=!!SR;syncVoiceBtn();
@@ -808,10 +818,10 @@ async function selectMode(mode,query=''){
   $('modeStatus').textContent={MAIN_MENU:'Choose assistance',ENVIRONMENT:'Environment Summary',SEARCH:'Keyword Search',NAVIGATION:'Navigation',STOPPED:'Assistance stopped'}[mode]||mode;
   liveBtn.classList.remove('on');liveBtn.querySelector('span').textContent='Start live assist';
   if(mode==='STOPPED'){state.cmd=false;pauseCmdRec();syncVoiceBtn();speak('Stopped. Camera and microphone are off.',{resumeCmd:false});updateComponentStatus();return;}
-  if(mode==='MAIN_MENU'){speak('Please select the assistance mode. Say one for environment summary, two for keyword search, or three for navigation.');document.querySelector('#modeChoices button')?.focus();updateComponentStatus();return;}
+  if(mode==='MAIN_MENU'){speak(MENU_TEXT);document.querySelector('#modeChoices button')?.focus();updateComponentStatus();return;}
   if(mode==='NAVIGATION'){$('queryLabel').textContent='Where would you like to go?';if(query)navigateTo(query);else {speak('Where would you like to go?');$('queryInput').focus();}updateComponentStatus();return;}
   $('queryLabel').textContent='What would you like me to find?';
-  if(mode==='SEARCH'&&!query){speak('What would you like me to find?');$('queryInput').focus();updateComponentStatus();return;}
+  if(mode==='SEARCH'&&!query){speak('Keyword search. Say the place you want, for example pharmacy, exit, or washroom.');$('queryInput').focus();updateComponentStatus();return;}
   try{
     await startCamera(generation);
     if(generation!==workflow.generation)return;

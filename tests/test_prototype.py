@@ -29,13 +29,25 @@ def test_rank_nearest_match():
     b={'label':'EXIT','steps':3,'conf':.9}
     assert symbols.match_keyword('exit',[a,b],[],[]) is b
 
-def test_navigation_fallback_and_validation():
+def test_navigation_fallback_and_validation(monkeypatch):
+    from server import navigation as nav
     client=TestClient(main.app)
+    # geocoder fails (no network / no hit) -> plain handoff, never blocks navigation
+    monkeypatch.setattr(nav,'geocode',lambda *a,**k:None)
     r=client.post('/api/navigation',json={'destination':'Bangalore','latitude':12.2,'longitude':76.1})
     assert r.status_code == 200
     assert r.json()['distance_m'] is None and r.json()['resolved'] is False
-    assert 'origin=' in r.json()['maps_url']
+    assert 'origin=' in r.json()['maps_url'] and 'Opening Google Maps' in r.json()['speech']
     assert 'origin=' not in MapsHandoffProvider().route('Bangalore')['maps_url']
+    # geocoder resolves -> spoken distance and walking time BEFORE the handoff
+    monkeypatch.setattr(nav,'geocode',lambda q,la,lo,**k:(la+0.01,lo))   # ~1.1 km north
+    r=client.post('/api/navigation',json={'destination':'City Hospital','latitude':12.2,'longitude':76.1}).json()
+    assert r['resolved'] is True and 1200 < r['distance_m'] < 1700       # 1.1 km x 1.3
+    assert abs(r['duration_s'] - r['distance_m']/(4.5*1000/3600)) <= 1   # 4.5 km/h walking
+    assert r['speech'].startswith('City Hospital is approximately 1.') and 'minutes on foot' in r['speech']
+    # geocoder raising must degrade the same way, not 500
+    monkeypatch.setattr(nav,'geocode',lambda *a,**k:(_ for _ in ()).throw(OSError('offline')))
+    assert client.post('/api/navigation',json={'destination':'X','latitude':1,'longitude':1}).json()['resolved'] is False
     for body in ({'destination':' '},{'destination':'A','latitude':100,'longitude':0},{'destination':'A','latitude':1}):
         assert client.post('/api/navigation',json=body).status_code == 422
 

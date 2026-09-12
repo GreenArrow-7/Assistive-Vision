@@ -282,12 +282,17 @@ def _evict_locked(now: float):
             _sessions.pop(k, None)
 
 
-def _confirm(session: str, items):
+def _confirm(session: str, items, by_label: bool = False):
     """Confirmed = same label AND overlapping position in the previous frame.
 
     Label alone was not enough: a person on the far left of frame 1 and a
     different person on the far right of frame 2 both counted as "confirmed",
     so the position check the confirmation exists for never happened.
+
+    by_label=True is for OCR text: the READING itself is the corroboration
+    (the same word recognised twice), and its box cannot be expected to
+    overlap — OCR runs only every OCR_EVERY_N live frames, ~8 s apart, so the
+    IoU rule meant a sign in plain view was almost never spoken while walking.
     """
     now = time.time()
     with _sessions_lock:
@@ -297,9 +302,13 @@ def _confirm(session: str, items):
                               "ts": now}
         _evict_locked(now)
     for i in items:
-        i["confirmed"] = any(lbl == i["label"] and
-                             _iou(box, i["box"]) >= config.CONFIRM_IOU
-                             for lbl, box in prev)
+        if by_label:
+            i["confirmed"] = any(symbols.normalize(lbl) == symbols.normalize(i["label"])
+                                 for lbl, _ in prev)
+        else:
+            i["confirmed"] = any(lbl == i["label"] and
+                                 _iou(box, i["box"]) >= config.CONFIRM_IOU
+                                 for lbl, box in prev)
     return [i for i in items if i["confirmed"]]
 
 
@@ -427,7 +436,12 @@ def analyze(frame: UploadFile = File(...), keyword: str = Form("", max_length=20
     # (field test 2026-09-08).
     speak_texts = texts
     if mode == "live" and session and run_ocr:
-        speak_texts = _confirm(session + ":t", texts)
+        # Text corroborates itself by being READ again, not by box overlap
+        # (see _confirm). And a keyword search answers from the current frame:
+        # the user asked a question now, and a sign in plain view must not be
+        # withheld until a second reading — that was "not recognizing text
+        # even though it is present in view".
+        speak_texts = texts if kw else _confirm(session + ":t", texts, by_label=True)
 
     # live mode: alarms need corroboration, descriptions do not. An
     # interrupting hazard is double-checked across two consecutive frames —
@@ -483,7 +497,9 @@ def client_config():
 
 @app.post("/api/navigation")
 def navigate(request: NavigationRequest):
-    return MapsHandoffProvider().route(request.destination, request.latitude, request.longitude)
+    from . import navigation as nav          # attribute lookup at call time: tests monkeypatch nav.geocode
+    return MapsHandoffProvider(geocoder=nav.geocode).route(
+        request.destination, request.latitude, request.longitude)
 
 
 if __name__ == "__main__":  # python -m server.main

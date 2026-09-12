@@ -10,8 +10,9 @@
     }
     command(raw) {
       const q = raw.toLowerCase().trim().replace(/[.!?]+$/, '');
-      if (/^(stop|pause|stop scanning)$/.test(q)) return ['STOPPED'];
-      if (/^(back|main menu|menu)$/.test(q)) return ['MAIN_MENU'];
+      // Numbered menu: 1 environment, 2 search, 3 navigation, 4 home, 5 stop
+      if (/^(stop|pause|stop scanning|five|5)$/.test(q)) return ['STOPPED'];
+      if (/^(back|go back|main menu|menu|home|home page|four|4)$/.test(q)) return ['MAIN_MENU'];
       if (/^(repeat|say that again)$/.test(q)) return ['REPEAT'];
       if (/^(start|begin|let's start)$/.test(q)) return ['MAIN_MENU'];
       if (/^(one|1|environment|environment summary|summary|start scanning|start scan|begin scanning|scan)$/.test(q)) return ['ENVIRONMENT'];
