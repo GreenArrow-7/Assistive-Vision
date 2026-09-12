@@ -284,7 +284,10 @@ let micQuietUntil=0;
 // speechSynthesis.speaking wedged at true after cancel(), and trusting it made
 // the app permanently deaf: every recognition result dropped forever.
 let ttsActive=false;
-const micQuiet=()=>ttsActive||Date.now()<micQuietUntil;
+// bargeText = the announcement currently being spoken WITH the mic open, so the
+// user can interrupt it ("4", "stop") — the recogniser drops only our own echo.
+let bargeText='';
+const micQuiet=()=>(ttsActive&&!bargeText)||Date.now()<micQuietUntil;
 // Stage-tagged debug log: add ?debug=1 to the URL (or localStorage av_debug=1),
 // then watch the console via chrome://inspect on a phone.
 const DBG=/[?&]debug=1/.test(location.search)||(()=>{try{return localStorage.getItem('av_debug')==='1'}catch(e){return false}})();
@@ -331,7 +334,7 @@ function pickVoice(){
 pickVoice();
 if('onvoiceschanged' in speechSynthesis)speechSynthesis.onvoiceschanged=pickVoice;
 
-function speak(text,{interrupt=true,liveDedupe=false,resumeCmd=true,then=null,onstart=null}={}){
+function speak(text,{interrupt=true,liveDedupe=false,resumeCmd=true,then=null,onstart=null,barge=false}={}){
   if(!text){if(then)then();return;}
   if($('transcript'))$('transcript').textContent=text;state.lastSpeech=text;
   // Muted / no TTS engine: the mic must still run — recognition's lifecycle
@@ -346,11 +349,13 @@ function speak(text,{interrupt=true,liveDedupe=false,resumeCmd=true,then=null,on
   state.lastSpeech=text;
   let followed=false;
   const follow=()=>{if(then&&!followed){followed=true;then();}};
-  const quiet=()=>{ttsActive=false;micQuietUntil=Date.now()+(options.mic_resume_delay||400);};
+  const quiet=()=>{ttsActive=false;const wasBarge=!!bargeText;bargeText='';
+    micQuietUntil=wasBarge?0:Date.now()+(options.mic_resume_delay||400);};
   try{
     if(interrupt)speechSynthesis.cancel();
-    pauseCmdRec();                       // mic off while we talk (no self-echo)
-    ttsActive=true;                      // closed until the utterance ends
+    ttsActive=true;
+    if(barge){bargeText=text;if(!state.recActive)resumeCmdRec();}   // keep listening: user may interrupt
+    else pauseCmdRec();                  // prompts that contain command words: mic off, no self-echo
     dbg('TTS start:',text.slice(0,60));
     const u=new SpeechSynthesisUtterance(text);
     u.rate=options.tts_rate;u.lang=options.language;
@@ -367,7 +372,7 @@ function speak(text,{interrupt=true,liveDedupe=false,resumeCmd=true,then=null,on
 
 /* ---------- continuous voice COMMAND engine ---------- */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-const MENU_TEXT='Home. Say one for environment summary. Two for keyword search, for example say pharmacy to search for a pharmacy. Three for navigation assistance. Four to return to the home page. Five to stop scanning.';
+const MENU_TEXT='Say one for environment summary. Two for keyword based search, for example say pharmacy. Three for navigation. Four for the home page. Five to stop scanning. You can say a number at any time.';
 const HELP_TEXT='Home menu: one, environment summary. Two, keyword search. Three, navigation. Four, home page. Five, stop. Anytime: find, followed by a place, like find washroom. navigate to, followed by a destination. distance and time. repeat. mute. unmute. help.';
 let cmdRec=null;
 function startCmdRec(){
@@ -378,6 +383,8 @@ function startCmdRec(){
     cmdRec.onresult=e=>{
       const q=e.results[e.results.length-1][0].transcript.toLowerCase().trim();
       if(micQuiet()){dbg('REC dropped (TTS quiet window):',q);return;}
+      if(bargeText&&AssistiveWorkflow.isEcho(q,bargeText)){dbg('REC echo dropped:',q);return;}
+      if(bargeText){dbg('REC barge-in over:',bargeText.slice(0,40));speechSynthesis.cancel();}
       dbg('REC heard:',q);
       if(q)handleCommand(q);
     };
@@ -440,8 +447,12 @@ function handleCommand(q){
   if(/hazards? only/.test(q)){$('hazOnly').click();return;}
   if(/close (the )?app|shut ?down|good ?bye|turn off/.test(q)){closeApp();return;}
   if(/calibrat/.test(q)){startCalibration();return;}
-  // fallback: treat as a search keyword
-  speak('Searching for '+q);setTimeout(()=>analyze(q),300);
+  // fallback: not a command. Never turn stray words into a search (that is how
+  // a spoken "4" became a search for "4 4"); give a short, rate-limited hint.
+  dbg('CMD unrecognised:',q);
+  const now=Date.now();
+  if(now-(state.lastHintAt||0)>15000){state.lastHintAt=now;
+    speak('Sorry, I did not catch that. Say a number from one to five, or say help.');}
 }
 $('repeatBtn').onclick=()=>{if(state.lastSpeech)speak(state.lastSpeech,{interrupt:true});};
 $('muteBtn').onclick=()=>setMuted(!state.muted);
@@ -483,11 +494,8 @@ async function pollHealth(){
       if(!state.ready){state.ready=true;warmupEl.classList.remove('show');
         setStatus('Ready · v'+(h.version||'?')+(h.text_obb?' · OBB':''),'ok');
         updateComponentStatus();
-        if(autoLiveWanted&&!state.live){autoLiveWanted=false;
-          // selectMode starts the camera before the loop; toggleLive() alone
-          // scanned with no camera and failed every frame (voice-start bug)
-          speak('All systems ready.',{then:()=>{if(!state.live)selectMode('ENVIRONMENT');}});}
-        else speak('All systems ready. Say start scanning, or a command like find washroom.');}
+        autoLiveWanted=false;             // voice "start" lands on the menu, like the button
+        speak('All systems ready. '+MENU_TEXT);}
       clearInterval(state.healthTimer);
     }else{
       warmupEl.classList.add('show');setStatus('Loading AI models…','busy');
@@ -531,9 +539,15 @@ async function analyze(keyword=''){
     render(d);
     const hazard=d.hazard_count>0;
     if(hazard){buzz([120,60,120]);flashHazard();}
-    const shouldSpeak=hazard||keyword||!state.hazOnly;
-    if(shouldSpeak)
-      enqueueSpeech(d.speech,d.priority??(hazard?1:3));
+    // Chatter budget: a plain scene summary at most every summary_interval,
+    // so the microphone is mostly free for commands. Hazards and search
+    // answers are never throttled.
+    const summaryGap=options.summary_interval||10000;
+    const summaryDue=Date.now()-(state.lastSummaryAt||0)>=summaryGap;
+    const shouldSpeak=hazard||keyword||(!state.hazOnly&&summaryDue);
+    if(shouldSpeak){
+      if(!hazard&&!keyword)state.lastSummaryAt=Date.now();
+      enqueueSpeech(d.speech,d.priority??(hazard?1:3));}
     updateComponentStatus(d);
     setStatus((hazard?'⚠ '+d.hazard_count+' hazard · ':'')+d.ms+' ms',hazard?'err':'ok');
   }catch(err){
@@ -793,7 +807,9 @@ function sayWelcome(){if(welcomed)return;primeTTS();
 async function startApp(){
   gateArmed=false;try{gateRec&&gateRec.abort();}catch(_){}
   $('gate')?.remove();$('app').style.visibility='visible';state.cmd=!!SR;syncVoiceBtn();
-  selectMode('MAIN_MENU');await pollHealth();
+  selectMode('MAIN_MENU','',{silent:true});
+  speak('Starting Assistive Vision. Loading the vision models, please wait.');
+  await pollHealth();
   if(!state.ready)state.healthTimer=setInterval(pollHealth,4000);
 }
 $('startBtn').onclick=startApp;
@@ -801,12 +817,12 @@ $('startBtn').onclick=startApp;
 function updateComponentStatus(d=null){
   if(d)state.lastResult=d;else d=state.live?state.lastResult:null;
   $('componentStatus').textContent='Camera: '+(video.srcObject?.getTracks().some(t=>t.readyState==='live')?'on':'off')+
-    '. Microphone: '+(speechSynthesis.speaking?'paused during speech':state.recActive?'listening':state.cmd?'waiting':SR?'off':'unavailable')+
+    '. Microphone: '+(ttsActive&&!bargeText?'paused during speech':state.recActive?'listening':state.cmd?'waiting':SR?'off':'unavailable')+
     '. Detection: '+(d?.component_errors?.length?'partially unavailable':state.live?'scanning':'idle')+
     '. OCR: '+(d?.ocr_active?'active':'idle')+
     '. Voice: '+(speechSynthesis.speaking?'speaking':'quiet')+'.';
 }
-async function selectMode(mode,query=''){
+async function selectMode(mode,query='',opts={}){
   state.live=false;clearTimeout(state.liveTimer);activeRequest?.abort();announcements.clear();speechSynthesis.cancel();
   workflow.transition(mode,query);const generation=workflow.generation;
   SID=crypto.randomUUID?crypto.randomUUID():Math.random().toString(36).slice(2);
@@ -817,8 +833,8 @@ async function selectMode(mode,query=''){
   const visual=['ENVIRONMENT','SEARCH'].includes(mode);$('stage').hidden=!visual;$('controls').hidden=!visual;
   $('modeStatus').textContent={MAIN_MENU:'Choose assistance',ENVIRONMENT:'Environment Summary',SEARCH:'Keyword Search',NAVIGATION:'Navigation',STOPPED:'Assistance stopped'}[mode]||mode;
   liveBtn.classList.remove('on');liveBtn.querySelector('span').textContent='Start live assist';
-  if(mode==='STOPPED'){state.cmd=false;pauseCmdRec();syncVoiceBtn();speak('Stopped. Camera and microphone are off.',{resumeCmd:false});updateComponentStatus();return;}
-  if(mode==='MAIN_MENU'){speak(MENU_TEXT);document.querySelector('#modeChoices button')?.focus();updateComponentStatus();return;}
+  if(mode==='STOPPED'){speak('Scanning stopped. Say one to scan again, or four for the home menu.');updateComponentStatus();return;}
+  if(mode==='MAIN_MENU'){if(!opts.silent)speak(MENU_TEXT);document.querySelector('#modeChoices button')?.focus();updateComponentStatus();return;}
   if(mode==='NAVIGATION'){$('queryLabel').textContent='Where would you like to go?';if(query)navigateTo(query);else {speak('Where would you like to go?');$('queryInput').focus();}updateComponentStatus();return;}
   $('queryLabel').textContent='What would you like me to find?';
   if(mode==='SEARCH'&&!query){speak('Keyword search. Say the place you want, for example pharmacy, exit, or washroom.');$('queryInput').focus();updateComponentStatus();return;}
@@ -835,12 +851,12 @@ function enqueueSpeech(text,priority){
 }
 function drainSpeech(){
   if(ttsActive)return;
-  const next=announcements.take();if(next&&$('transcript'))speak(next.text,{interrupt:false});
+  const next=announcements.take();if(next&&$('transcript'))speak(next.text,{interrupt:false,barge:true});
 }
 setInterval(drainSpeech,300);
 setInterval(()=>{if($('componentStatus'))updateComponentStatus();},1500);
 document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>selectMode(b.dataset.mode));
-$('menuBtn').onclick=()=>selectMode('MAIN_MENU');$('stopAll').onclick=()=>selectMode('STOPPED');
+$('menuBtn').onclick=()=>selectMode('MAIN_MENU');$('stopAll').onclick=closeApp;
 $('queryForm').onsubmit=e=>{e.preventDefault();const query=$('queryInput').value.trim();if(query)selectMode(workflow.mode,query);};
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&state.live)selectMode('STOPPED');});
 window.addEventListener('pagehide',()=>{activeRequest?.abort();video.srcObject?.getTracks().forEach(t=>t.stop());pauseCmdRec();});
