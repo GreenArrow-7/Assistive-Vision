@@ -11,6 +11,14 @@ from .environment import context_hint, select_items
 from .classes_av import AV_CRITICAL
 
 
+def is_critical(item):
+    # Approximate monocular proximity is an alert cue, never proof of collision.
+    if item.get("conf", 0) < .8:
+        return False
+    return (item.get("raw") in {"stairs_up", "stairs_down"} or
+            (item.get("steps") is not None and item["steps"] <= 2))
+
+
 def _fmt(item) -> str:
     label = item.get("label", "unknown")
     d = item.get("direction", "ahead")
@@ -31,7 +39,7 @@ def build_speech(hazards, objects, texts, symbols, keyword=None, match=None) -> 
     parts = []
 
     # 0 — CRITICAL (descending stairs): announced alone, first, emphatic
-    critical = [h for h in hazards if h.get("raw") in AV_CRITICAL]
+    critical = [h for h in hazards if h.get("raw") in AV_CRITICAL or is_critical(h)]
     if critical:
         c = min(critical, key=lambda x: x.get("steps") or 99)
         parts.append("Warning! " + _fmt(c) + ". Stop and proceed carefully.")
@@ -77,7 +85,7 @@ def build_speech(hazards, objects, texts, symbols, keyword=None, match=None) -> 
             parts.append("I can see: " + ", ".join(_fmt(r) for r in rest) + ".")
 
     if not parts:
-        parts.append("No text or objects detected. Try moving the camera slowly.")
+        parts.append("No reliable text or objects identified in this view.")
 
     # critical hazards MUST be counted: the client uses hazard_count > 0 to
     # vibrate, flash and interrupt speech — a lone stairs_down reported 0.

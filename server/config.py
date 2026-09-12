@@ -47,7 +47,8 @@ SYMBOL_FROM_CLASS = {
 }
 SYMBOL_KEYWORDS = {
     "washroom":        ["washroom", "restroom", "toilet", "wc", "gents", "ladies", "men", "women"],
-    "emergency exit":  ["exit", "emergency", "fire exit", "way out"],
+    "emergency exit":  ["emergency exit", "fire exit"],
+    "exit": ["exit", "way out"],
     "elevator":        ["lift", "elevator"],
     "wheelchair access": ["wheelchair", "accessible", "disabled"],
     "parking":         ["parking", "car park", "p1", "p2", "basement parking"],
@@ -115,7 +116,7 @@ TEXT_CONF = _number("TEXT_CONFIDENCE_THRESHOLD", TEXT_CONF, .01, 1)
 IMAGE_SIZE = _number("IMAGE_SIZE", 640, 320, 1280, True)
 NMS_THRESHOLD = _number("NMS_THRESHOLD", .5, .05, .95)
 OCR_EVERY_N = _number("OCR_INTERVAL", OCR_EVERY_N, 1, 30, True)
-FRAME_INTERVAL = _number("FRAME_INTERVAL", 2600, 500, 30000, True)
+FRAME_INTERVAL = _number("FRAME_INTERVAL", 350, 100, 30000, True)
 ANNOUNCEMENT_COOLDOWN = _number("ANNOUNCEMENT_COOLDOWN", 9, 1, 120)
 STEP_LENGTH_M = _number("STEP_LENGTH", STEP_LENGTH_M, .2, 1.5)
 CAMERA_HEIGHT_M = _number("CAMERA_HEIGHT", CAMERA_HEIGHT_M, .3, 2.5)
@@ -127,3 +128,12 @@ LANGUAGE = os.getenv("LANGUAGE", "en-IN")
 GROUND_CLASSES = {"person", "chair", "table", "dining table", "door", "dustbin",
                   "car", "bus", "truck", "bicycle", "motorcycle", "bench", "couch",
                   "sink", "toilet", "refrigerator", "pole", "potted plant"}
+
+# Live lanes run independently; these values are milliseconds.
+OCR_INTERVAL_MS = _number("OCR_INTERVAL_MS", 2000, 500, 30000, True)
+TTS_COOLDOWN_MS = _number("TTS_COOLDOWN_MS", 650, 200, 3000, True)
+DETECTION_TTL_MS = _number("DETECTION_TTL_MS", 6500, 1000, 30000, True)
+MAX_MISSED_FRAMES = _number("MAX_MISSED_FRAMES", 3, 1, 10, True)
+MAX_RESULT_AGE_MS = _number("MAX_RESULT_AGE_MS", 4500, 1000, 15000, True)
+LOCATION_TIMEOUT_MS = _number("LOCATION_TIMEOUT_MS", 8000, 1000, 15000, True)
+INFERENCE_THREADS = _number("INFERENCE_THREADS", 2, 1, 8, True)

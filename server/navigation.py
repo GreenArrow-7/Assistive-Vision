@@ -18,13 +18,12 @@ class NavigationRequest(BaseModel):
 
 class MapsHandoffProvider:
     def route(self, destination, latitude=None, longitude=None):
-        params = dict(api=1, destination=destination, travelmode="walking")
+        params = dict(api=1, destination=destination, travelmode="walking", dir_action="navigate")
         if latitude is not None and longitude is not None:
             params["origin"] = f"{latitude},{longitude}"
         return {
             "provider": "google_maps_handoff", "destination": destination,
             "resolved": False, "distance_m": None, "duration_s": None,
             "maps_url": "https://www.google.com/maps/dir/?" + urlencode(params),
-            "speech": "Route distance and travel time are unavailable locally. "
-                      "Open Google Maps to resolve your destination and get directions.",
+            "speech": "Opening Google Maps for directions, distance and travel time.",
         }

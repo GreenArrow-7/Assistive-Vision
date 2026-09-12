@@ -1,48 +1,35 @@
 /* Pure state and speech scheduling logic, shared with Node regression tests. */
 (function (root) {
   class Workflow {
-    constructor() { this.mode = 'WELCOME'; this.query = ''; this.generation = 0; }
-    transition(mode, query = '') {
-      if (!['WELCOME', 'MAIN_MENU', 'ENVIRONMENT', 'SEARCH', 'NAVIGATION', 'STOPPED'].includes(mode))
-        throw new Error('Unknown assistance mode');
-      this.mode = mode; this.query = query; this.generation++;
-      return mode;
+    constructor() { this.mode='WELCOME';this.query='';this.destination='';this.awaiting=null;this.generation=0; }
+    transition(mode,query='') {
+      if(!['WELCOME','MAIN_MENU','ENVIRONMENT','SEARCH','NAVIGATION','STOPPED'].includes(mode))throw new Error('Unknown assistance mode');
+      this.mode=mode;this.query=mode==='SEARCH'?query:'';
+      if(mode==='NAVIGATION'&&query)this.destination=query;
+      this.awaiting=!query&&['SEARCH','NAVIGATION'].includes(mode)?mode:null;
+      this.generation++;return mode;
     }
     command(raw) {
-      const q = raw.toLowerCase().trim().replace(/[.!?]+$/, '');
-      if (/^(stop|pause|stop scanning)$/.test(q)) return ['STOPPED'];
-      if (/^(back|main menu|menu)$/.test(q)) return ['MAIN_MENU'];
-      if (/^(repeat|say that again)$/.test(q)) return ['REPEAT'];
-      if (/^(start|begin|let's start)$/.test(q)) return ['MAIN_MENU'];
-      if (/^(one|1|environment|environment summary|summary|start scanning|scan)$/.test(q)) return ['ENVIRONMENT'];
-      if (/^(two|2|search|keyword search)$/.test(q)) return ['SEARCH'];
-      if (/^(three|3|navigation|navigate)$/.test(q)) return ['NAVIGATION'];
-      if (/^(find|locate|search for)\s+/.test(q)) return ['SEARCH', q.replace(/^(find|locate|search for)\s+/, '')];
-      if (/^(go to|navigate to)\s+/.test(q)) return ['NAVIGATION', q.replace(/^(go to|navigate to)\s+/, '')];
-      if (this.mode === 'SEARCH' || this.mode === 'NAVIGATION') return [this.mode, q];
+      const q=raw.toLowerCase().trim().replace(/[.!?]+$/,'').replace(/\s+/g,' ');
+      if(/^(stop|pause|stop scanning|stop scan|stop camera|stop microphone)$/.test(q))return ['STOPPED'];
+      if(/^(back|go back|main menu|menu)$/.test(q))return ['MAIN_MENU'];
+      if(/^(repeat|say that again)$/.test(q))return ['REPEAT'];
+      if(/^(start|start scanning|start scan|begin|begin scanning|let's start|resume scanning|scan)$/.test(q))return ['ENVIRONMENT'];
+      if(/^(scan environment|describe environment|describe surroundings|what is around me|environment scan)$/.test(q))return ['ENVIRONMENT_SCAN'];
+      if(/^(distance and time|distance & time|how far is it|travel time|route distance|estimated travel time)$/.test(q))return ['NAV_INFO'];
+      if(/^(one|1|environment|environment summary|summary)$/.test(q))return ['ENVIRONMENT_SCAN'];
+      if(/^(two|2|search|keyword search|find)$/.test(q))return ['SEARCH'];
+      if(/^(three|3|navigation|navigate)$/.test(q))return ['NAVIGATION'];
+      const search=q.match(/^(?:find|locate|search for)\s+(.+)$/);
+      if(search)return ['SEARCH',search[1]];
+      const nav=q.match(/^(?:go to|navigate to|take me to|directions to)\s+(.+)$/);
+      if(nav)return ['NAVIGATION',nav[1]];
+      for(const [pattern,intent] of [[/^(help|commands|what can you do)$/,'HELP'],[/^(mute|be quiet|silence)$/,'MUTE'],[/^(unmute|sound on)$/,'UNMUTE'],[/^(close app|goodbye|turn off)$/,'CLOSE'],[/^(calibrate|calibration)$/,'CALIBRATE'],[/^hazards only$/,'HAZARDS']])if(pattern.test(q))return [intent];
+      // Bare words are accepted only directly after the app asked for a target.
+      if(this.awaiting&&q.length<=200)return [this.awaiting,q];
       return null;
     }
   }
-  class AnnouncementQueue {
-    constructor(cooldown = 9000) { this.cooldown = cooldown; this.last = new Map(); this.pending = []; }
-    push(text, priority = 3, now = Date.now()) {
-      if (!text || now - (this.last.get(text) ?? -Infinity) < this.cooldown) return false;
-      if (this.pending.some(x => x.text === text)) return false;
-      if (priority === 0) this.pending = [];
-      this.pending.push({text, priority, time: now});
-      this.pending.sort((a,b) => a.priority-b.priority || a.time-b.time);
-      this.pending = this.pending.slice(0, 3);
-      return true;
-    }
-    take(now = Date.now()) {
-      this.pending = this.pending.filter(x => now-x.time < 8000);
-      const item = this.pending.shift();
-      if (item) this.last.set(item.text, now);
-      for (const [key, time] of this.last) if (now-time > this.cooldown) this.last.delete(key);
-      return item;
-    }
-    clear() { this.pending = []; }
-  }
-  root.AssistiveWorkflow = {Workflow, AnnouncementQueue};
-  if (typeof module !== 'undefined') module.exports = root.AssistiveWorkflow;
-})(typeof window !== 'undefined' ? window : globalThis);
+  root.AssistiveWorkflow={Workflow};
+  if(typeof module!=='undefined')module.exports=root.AssistiveWorkflow;
+})(typeof window!=='undefined'?window:globalThis);

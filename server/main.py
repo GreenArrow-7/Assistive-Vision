@@ -27,7 +27,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from . import (classes_av, config, detector, priority, spatial, symbols,
                text_pipeline)
 
-VERSION = "1.8"
+VERSION = "1.9"
 logger = logging.getLogger("assistive_vision")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
@@ -40,6 +40,7 @@ WEB = Path(__file__).resolve().parent.parent / "web" / "index.html"
 
 # ML models are not thread-safe; serialize inference.
 _infer_lock = threading.Lock()
+_text_lock = threading.Lock()
 
 # /analyze is a sync def, so FastAPI runs it in a threadpool worker — several
 # concurrently. _sessions is mutated from all of them; without this its
@@ -65,7 +66,7 @@ INFER_WAIT_S = 10.0
 # /analyze burns 1-3 s of CPU per call and needs no credentials, so an
 # unthrottled one is free compute for anyone who finds the URL. A live session
 # sends a frame every 2.6 s (~23/min); 60 leaves headroom for scans on top.
-RATE_LIMIT = 60             # requests per window, per client IP
+RATE_LIMIT = 180             # requests per window, per client IP
 RATE_WINDOW_S = 60
 MAX_TRACKED_IPS = 2000
 
@@ -76,6 +77,9 @@ _rate_lock = threading.Lock()
 # ---------------------------------------------------------------- warmup
 def _warmup():
     _state["warming"] = True
+    import torch
+    torch.set_num_threads(config.INFERENCE_THREADS)
+    cv2.setNumThreads(1)
     failures = {}
     for name, loader in (("objects", detector._get_model), ("ocr", text_pipeline._get_reader),
                          ("oriented_text", text_pipeline._get_obb)):
@@ -185,9 +189,11 @@ def index():
     return FileResponse(WEB)
 
 
-@app.get("/workflow.js")
-def workflow_script():
-    return FileResponse(WEB.parent / "workflow.js", media_type="application/javascript")
+@app.get("/{script_name}.js")
+def script_file(script_name: str):
+    if script_name not in {"workflow", "speech", "realtime", "app"}:
+        return Response(status_code=404)
+    return FileResponse(WEB.parent / (script_name + ".js"), media_type="application/javascript")
 
 
 @app.get("/favicon.ico")
@@ -218,7 +224,8 @@ def health():
         # the "Warning! Stop and proceed carefully" branch is currently
         # unreachable. A hazard system that cannot fire its top alert must say
         # so out loud rather than leave the caller to assume it works.
-        "critical_alert": (detector.active_schema() == detector.SCHEMA_AV
+        "critical_alert": detector.active_schema() is not None,
+        "descending_stairs_alert": (detector.active_schema() == detector.SCHEMA_AV
                            and classes_av.CRITICAL_ACTIVE),
         "dormant_hazards": sorted(classes_av.DORMANT_HAZARDS),
         "text_obb": obb,
@@ -322,8 +329,9 @@ def _ocr_due(gate: str) -> bool:
 @app.post("/api/detect/text")
 @app.post("/api/detect/objects")
 @app.post("/analyze")
-def analyze(frame: UploadFile = File(...), keyword: str = Form("", max_length=200),
+def analyze(request: Request, frame: UploadFile = File(...), keyword: str = Form("", max_length=200),
             mode: Literal["single", "live"] = Form("single"), session: str = Form(""),
+            component: Literal["all", "objects", "text"] = Form("all"),
             pitch: float = Form(0.0, ge=-90, le=90), vfov: float = Form(0.0, ge=0, le=90)):
     if not _state["ready"]:
         msg = "AI models failed to load. Check server logs." if _state["error"] \
@@ -361,50 +369,38 @@ def analyze(frame: UploadFile = File(...), keyword: str = Form("", max_length=20
                          interpolation=cv2.INTER_AREA)
     h, w = img.shape[:2]
 
-    # ---- blur gate: motion-blurred frames produce garbage detections ----
+    # Quality is metadata, not a hard stop: slightly blurred frames can contain
+    # usable objects/text. Never require the user to steer or steady the camera.
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-    if sharpness < config.BLUR_THRESHOLD:
-        return {"speech": "Hold the camera steady.", "blur": True,
-                "hazard_count": 0, "keyword": "", "match": None,
-                "hazards": [], "objects": [], "texts": [], "symbols": [],
-                "frame": {"w": w, "h": h},
-                "ms": round((time.time() - t0) * 1000)}
-
-    # a keyword search needs fresh text to find its match; only the idle live
-    # loop is gated
-    gate = session + ":ocr"
-    live_idle = mode == "live" and bool(session) and not keyword.strip()
-    run_ocr = (not live_idle) or _ocr_due(gate)
-
-    # Shed load rather than queue it. Every request blocked here holds a
-    # threadpool worker, and the client gives up at 25 s (index.html), so a
-    # deep queue means we finish inference for callers who already left --
-    # spending the CPU that made the queue deep in the first place. Failing
-    # fast at INFER_WAIT_S leaves the worst case (wait, then a ~7 s OCR frame)
-    # inside the client's budget, and a 503 is something it can retry.
-    if not _infer_lock.acquire(timeout=INFER_WAIT_S):
-        return JSONResponse(
-            {"error": "Server busy, try again in a moment.", "busy": True},
-            status_code=503, headers={"Retry-After": "2"})
-    try:  # models are not thread-safe
-        component_errors = []
+    quality = "limited" if sharpness < config.BLUR_THRESHOLD else "normal"
+    if request.url.path == "/api/detect/objects": component = "objects"
+    if request.url.path == "/api/detect/text": component = "text"
+    run_objects = component != "text"
+    live_idle = component == "all" and mode == "live" and bool(session)
+    run_ocr = component != "objects" and (not live_idle or _ocr_due(session + ":ocr"))
+    component_errors, objects, hazards, texts = [], [], [], []
+    timings = {}
+    # Independent models have independent locks. Split live requests shed load
+    # immediately: no waiting queue of old frames, and OCR cannot lock objects.
+    for name, enabled, lock, provider in (
+        ("objects", run_objects, _infer_lock, object_provider),
+        ("text", run_ocr, _text_lock, text_provider)):
+        if not enabled: continue
+        if not lock.acquire(timeout=INFER_WAIT_S if component == "all" else 0):
+            return JSONResponse({"error": "Server busy, try again in a moment.", "busy": True},
+                                status_code=503, headers={"Retry-After": "2"})
+        started = time.perf_counter()
         try:
-            objects, hazards = object_provider.detect(img)
+            if name == "objects": objects, hazards = provider.detect(img)
+            else: texts = provider.detect(img)
         except Exception:
-            logger.exception("object_inference_failed")
-            objects, hazards = [], []
-            component_errors.append("Object detection unavailable; obstacle warnings may be missing.")
-        texts = []
-        if run_ocr:
-            try:
-                texts = text_provider.detect(img)
-            except Exception:
-                logger.exception("ocr_inference_failed")
-                component_errors.append("Text recognition unavailable.")
-        # Never reuse old-frame text coordinates after the camera moves.
-    finally:
-        _infer_lock.release()
+            logger.exception("inference_failed component=%s", name)
+            component_errors.append("Object detection unavailable; obstacle warnings may be missing."
+                                    if name == "objects" else "Text recognition unavailable.")
+        finally:
+            timings[name] = round((time.perf_counter()-started)*1000)
+            lock.release()
 
     pitch = max(-10.0, min(70.0, pitch))
     vf = vfov if 25.0 <= vfov <= 90.0 else None
@@ -412,7 +408,9 @@ def analyze(frame: UploadFile = File(...), keyword: str = Form("", max_length=20
         spatial.annotate(group, w, h, pitch, vf)
 
     # hazards only interrupt when close — distant ones demote to objects
-    close_hz = [x for x in hazards if x["proximity"] != "at a distance"]
+    close_hz = [x for x in hazards if x["proximity"] != "at a distance" or x.get("raw") in {"stairs_up", "stairs_down"}]
+    for item in close_hz:
+        item["critical"] = priority.is_critical(item)
     objects += [{**x, "kind": "object"} for x in hazards if x not in close_hz]
 
     syms = symbols.symbols_from_objects(objects + close_hz) \
@@ -426,7 +424,8 @@ def analyze(frame: UploadFile = File(...), keyword: str = Form("", max_length=20
     # live mode: only CONFIRMED (2 consecutive frames) objects/hazards are
     # spoken; everything is still returned for rendering
     if mode == "live" and session:
-        speak_hz = _confirm(session + ":h", close_hz)
+        confirmed_hz = _confirm(session + ":h", close_hz)
+        speak_hz = [h for h in close_hz if h.get("critical") or h in confirmed_hz]
         speak_obj = _confirm(session + ":o", objects)
     else:
         speak_hz, speak_obj = close_hz, objects
@@ -444,6 +443,9 @@ def analyze(frame: UploadFile = File(...), keyword: str = Form("", max_length=20
         "speech": out["speech"],
         "hazard_count": out["hazard_count"],
         "blur": False,
+        "frame_quality": quality,
+        "timings_ms": timings,
+        "object_active": run_objects and not any("Object" in e for e in component_errors),
         "component_errors": component_errors,
         "ocr_active": run_ocr and not any("Text" in e for e in component_errors),
         "priority": speech_priority,
@@ -462,7 +464,10 @@ def analyze(frame: UploadFile = File(...), keyword: str = Form("", max_length=20
 def client_config():
     return {"frame_interval": config.FRAME_INTERVAL,
             "announcement_cooldown": config.ANNOUNCEMENT_COOLDOWN * 1000,
-            "tts_rate": config.TTS_RATE, "language": config.LANGUAGE}
+            "tts_rate": config.TTS_RATE, "language": config.LANGUAGE,
+            "ocr_interval_ms": config.OCR_INTERVAL_MS, "tts_cooldown_ms": config.TTS_COOLDOWN_MS,
+            "detection_ttl_ms": config.DETECTION_TTL_MS, "max_missed_frames": config.MAX_MISSED_FRAMES,
+            "max_result_age_ms": config.MAX_RESULT_AGE_MS, "location_timeout_ms": config.LOCATION_TIMEOUT_MS}
 
 @app.post("/api/navigation")
 def navigate(request: NavigationRequest):

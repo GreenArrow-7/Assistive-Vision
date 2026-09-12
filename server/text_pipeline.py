@@ -10,6 +10,7 @@ Output items: {label, box=(x1,y1,x2,y2), conf, angle, kind='text'}
 """
 import math
 import os
+import re
 
 import cv2
 import numpy as np
@@ -71,6 +72,25 @@ def _deskew(frame, quad):
     return cv2.warpPerspective(frame, M, (w, h))
 
 
+def useful_text(text):
+    """Conservative garbage filter; digits/room numbers and short signs survive."""
+    text = ' '.join(text.split())
+    chars = [c for c in text if not c.isspace()]
+    return (2 <= len(chars) <= 180 and
+            sum(c.isalnum() for c in chars) / len(chars) >= .6 and
+            not re.search(r'(.)\1{4,}', text))
+
+
+def prepare_text_frame(frame):
+    # Improve low contrast locally without changing coordinates or inventing detail.
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    if gray.mean() < 65 or gray.std() < 25:
+        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        lab[:, :, 0] = cv2.createCLAHE(clipLimit=2, tileGridSize=(8, 8)).apply(lab[:, :, 0])
+        return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+    return frame
+
+
 def merge_text_lines(items):
     """Join adjacent words on the same oriented baseline, preserving a quad.
 
@@ -125,6 +145,7 @@ def merge_text_lines(items):
 
 def detect_text(frame_bgr):
     """Return list of recognized text items with oriented-box metadata."""
+    frame_bgr = prepare_text_frame(frame_bgr)
     try:
         obb = _get_obb()
     except Exception:
@@ -141,9 +162,10 @@ def detect_text(frame_bgr):
                                   res.obb.conf.cpu().numpy()):
                 quad = poly.reshape(4, 2).tolist()
                 roi = _deskew(frame_bgr, quad)
-                out = reader.readtext(roi, detail=1, paragraph=False)
+                # Region is already detected and rectified; do not run CRAFT again.
+                out = reader.recognize(roi, detail=1, paragraph=False)
                 text = " ".join(t for _, t, c in out if c >= config.TEXT_CONF).strip()
-                if len(text) > 1:
+                if useful_text(text):
                     items.append({
                         "label": text,
                         "box": _quad_to_aabb(quad),
@@ -157,9 +179,18 @@ def detect_text(frame_bgr):
 
     # --- Path B: EasyOCR end-to-end (CRAFT detector handles rotation) ---
     results = reader.readtext(frame_bgr, detail=1, paragraph=False)
-    for quad, text, conf in results:
+    retries = 0
+    for quad, text, conf in results[:64]:
         text = text.strip()
-        if conf >= config.TEXT_CONF and len(text) > 1:
+        # Bounded orientation retry only for uncertain regions; no second detector.
+        if .15 <= conf < config.TEXT_CONF and retries < 2:
+            retries += 1
+            out = reader.recognize(_deskew(frame_bgr, quad), detail=1,
+                                   paragraph=False, rotation_info=[90, 270])
+            if out:
+                _, candidate, score = max(out, key=lambda x: x[2])
+                if score > conf: text, conf = candidate.strip(), score
+        if conf >= config.TEXT_CONF and useful_text(text):
             items.append({
                 "label": text,
                 "box": _quad_to_aabb(quad),

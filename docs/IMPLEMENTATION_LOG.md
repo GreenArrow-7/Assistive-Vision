@@ -114,3 +114,16 @@ from these fixtures. Training was not run during this implementation.
 - Distances depend on assumed camera/object geometry and require physical validation.
 - Live voice recognition depends on browser support and may use an external service.
 - The server is for trusted local use; public production deployment needs authentication.
+
+## September 12, 2026 — real-time and voice lifecycle repair
+
+Extracted browser orchestration into app.js, speech.js and realtime.js. Unified
+recognition and command routing, removed broad click-to-speak handlers, repaired
+post-TTS listening and transient recognition restart handling. Added persistent
+tracking, independent latest-frame object/OCR lanes, bounded location handoff,
+current-state indicators, and camera/error recovery. See REALTIME_FIXES.md for root
+causes, affected files, test coverage, measurements and remaining device limits.
+
+Validation: 22 JavaScript regressions pass; backend suite and actual OCR smoke
+results are recorded in REALTIME_FIXES.md. Browser checks found and fixed native
+timer binding; physical camera/microphone success is not claimed.
