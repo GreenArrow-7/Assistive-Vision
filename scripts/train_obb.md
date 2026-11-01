@@ -1,9 +1,10 @@
 # Training the YOLOv8-OBB text detector
 
-Two recipes. A (ICDAR only) is the fast baseline; B is the 3-stage curriculum
+Three recipes. A (ICDAR only) is the fast baseline; B is the 3-stage curriculum
 (SynthText → COCO-Text → ICDAR-15) that papers use for the best oriented-text
-results. Both produce one file: `models/text_obb.pt` (class 0 = text) — the
-pipeline auto-switches when it exists (`/health` → `"text_obb": true`).
+results; C needs no registration and can be started today. All produce one file:
+`models/text_obb.pt` (class 0 = text) — the pipeline auto-switches when it
+exists (`/health` → `"text_obb": true`).
 
 ## Recipe A — ICDAR-2015 only (~1 evening)
 
@@ -14,6 +15,37 @@ pipeline auto-switches when it exists (`/health` → `"text_obb": true`).
    yolo obb train model=yolov8n-obb.pt data=scripts/icdar15_obb.yaml epochs=80 imgsz=960 degrees=30
    ```
 3. `runs/obb/train/weights/best.pt` → `models/text_obb.pt`.
+
+## Recipe C — COCO-Text only, no registration (~1 evening)
+
+ICDAR-2015 needs an account; COCO-Text and the COCO images do not, so this is the
+recipe for when registration is the thing in the way. COCO-Text annotates a subset
+of COCO train2014 with polygon masks, which `convert_cocotext_to_obb.py` turns into
+oriented boxes (`cv2.minAreaRect`), and it carries its own train/val split in the
+`set` field, so no second dataset is needed to validate on.
+
+1. Both downloads are open. Run them inside Colab, not over a home link:
+   ```bash
+   wget https://github.com/bgshih/cocotext/releases/download/dl/cocotext.v2.zip   # 12 MB
+   unzip -q cocotext.v2.zip
+   wget http://images.cocodataset.org/zips/train2014.zip                          # 12.6 GB
+   unzip -q train2014.zip
+   ```
+   Checked 2026-11-01: both answered 200. Only the ~20k annotated images are copied
+   into the dataset, so the converter's output is about 4 GB.
+2. ```bash
+   python scripts/convert_cocotext_to_obb.py --json cocotext.v2.json --images train2014 --out datasets/cocotext_obb
+   yolo obb train model=yolov8n-obb.pt data=scripts/cocotext_obb.yaml epochs=60 imgsz=960 degrees=30
+   ```
+   Fewer epochs than Recipe A on purpose: this set is about twenty times larger.
+   The yaml follows the same convention as `icdar15_obb.yaml`.
+3. `runs/obb/train/weights/best.pt` → `models/text_obb.pt`.
+
+What it costs: COCO-Text is mostly small incidental text in everyday photographs, so
+the detector is weaker on the blurry, strongly rotated signboards that ICDAR-15 is
+made of — the deployment case. Treat it as a working first model. Recipe A or B
+later resumes from these weights and only improves them, because the class list
+(0 = text) never changes.
 
 ## Recipe B — SynthText → COCO-Text → ICDAR curriculum (2–3 Colab sessions)
 
