@@ -61,9 +61,35 @@ def _quad_angle(quad):
     return math.degrees(math.atan2(y2 - y1, x2 - x1))
 
 
+def _order_quad(quad):
+    """Return corners as top-left, top-right, bottom-right, bottom-left.
+
+    CRAFT hands back corners in reading order; YOLO-OBB's xyxyxyxy starts at an
+    arbitrary corner of the rotated rect, so without this the crop comes out
+    mirrored or upside down and OCR reads nothing.
+    """
+    p = np.asarray(quad, dtype=np.float32).reshape(4, 2)
+    c = p.mean(axis=0)
+    p = p[np.argsort(np.arctan2(p[:, 1] - c[1], p[:, 0] - c[0]))]
+    # Start at the corner whose outgoing edge is the longest one running
+    # left-to-right: for text that edge is the baseline, so the crop lands
+    # upright instead of flipped.
+    best, start = -1.0, 0
+    for i in range(4):
+        d = p[(i + 1) % 4] - p[i]
+        if d[0] <= 0:
+            continue
+        length = float(np.hypot(d[0], d[1]))
+        if length > best:
+            best, start = length, i
+    if best < 0:   # perfectly vertical text: no rightward edge exists
+        start = int(np.argmax([float(np.hypot(*(p[(i + 1) % 4] - p[i]))) for i in range(4)]))
+    return np.roll(p, -start, axis=0)
+
+
 def _deskew(frame, quad):
     """Rotate an oriented quad region to horizontal for cleaner OCR."""
-    quad = np.array(quad, dtype=np.float32)
+    quad = _order_quad(quad)
     w = int(max(np.linalg.norm(quad[0] - quad[1]), np.linalg.norm(quad[2] - quad[3])))
     h = int(max(np.linalg.norm(quad[1] - quad[2]), np.linalg.norm(quad[3] - quad[0])))
     w, h = max(w, 8), max(h, 8)
@@ -186,7 +212,7 @@ def detect_text(frame_bgr):
         if .15 <= conf < config.TEXT_CONF and retries < 2:
             retries += 1
             out = reader.recognize(_deskew(frame_bgr, quad), detail=1,
-                                   paragraph=False, rotation_info=[90, 270])
+                                   paragraph=False, rotation_info=[90, 180, 270])
             if out:
                 _, candidate, score = max(out, key=lambda x: x[2])
                 if score > conf: text, conf = candidate.strip(), score
