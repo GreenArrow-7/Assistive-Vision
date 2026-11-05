@@ -19,6 +19,7 @@ EPOCHS = 80
 IMGSZ = 960                                    # text is small; 640 loses it
 BATCH = 8                                      # T4-safe at 960
 WORK = "/content/av_text"                      # scratch
+REPO_DIR = "/content/Assistive-Vision"         # where the repo was cloned (paste-into-Colab only)
 
 # %% ---------------------------------------------------------------- setup
 import os
@@ -36,7 +37,10 @@ if IN_COLAB:
     drive.mount("/content/drive")
 
 REPO = Path(__file__).resolve().parent.parent if "__file__" in dir() \
-    else Path("/content/Assistive Vision")
+    else Path(REPO_DIR)
+# Checked here, not at the import below: a wrong REPO_DIR otherwise fails as a bare ImportError.
+if not (REPO / "scripts" / "convert_icdar_to_obb.py").exists():
+    raise SystemExit(f"{REPO} is not the Assistive-Vision repo. Clone it, or set REPO_DIR.")
 sys.path.insert(0, str(REPO / "scripts"))
 
 work = Path(WORK)

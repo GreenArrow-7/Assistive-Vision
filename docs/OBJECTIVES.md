@@ -11,7 +11,7 @@ behaviour, it points at the test or the README section that backs it.
 | 1 | Text recognition using OCR | Met | `server/text_pipeline.py`, text lane in `web/app.js:235` |
 | 2 | Voice interaction and keyword search | Met | `web/workflow.js`, `web/speech.js`, `server/symbols.py` |
 | 3 | Audio guidance and environment summary | Met, with one limit | `web/speech.js`, `web/realtime.js`, `web/app.js:265` |
-| 4 | Oriented text from natural scenes | Met by the fallback detector | `server/text_pipeline.py:146` (CRAFT quadrilaterals, deskew, rotation retry) |
+| 4 | Oriented text from natural scenes | Met; own detector trained, not yet adopted | `server/text_pipeline.py:172` (CRAFT quads, deskew, rotation retry), `models/text_obb.pt` |
 
 ## 1. Text recognition using OCR
 
@@ -110,26 +110,46 @@ What is in place:
   and keeps the better score. At most two per frame, so the cost stays fixed.
 - `server/text_pipeline.py:94` `merge_text_lines()` — words on the same oriented baseline (within 12°)
   are joined in reading order, so a phrase search works on a tilted multi-word sign.
-- `angle` and `quad` reach the client: `server/main.py:267` `_pub()` passes every field through.
+- `angle` and `quad` reach the client: `server/main.py:267` `_pub()` passes every field
+  through, and the overlay strokes the quad itself when one is present (`web/app.js:502`),
+  falling back to a rectangle only for items without orientation.
 - The demo set includes the case on purpose: `demo/scenes.json` has `college_front`, described as "the
   college building with its tilted name board", and `exit_tilted`.
 
+A detector of our own now exists. `scripts/train_cocotext_colab.py` converts COCO-Text v2
+polygons to YOLO-OBB labels (every polygon through `cv2.minAreaRect`, illegible instances dropped)
+and trains `yolov8n-obb` on 13,880 train / 3,261 val images with `degrees=30`. Measured on the
+COCO-Text val split, 60 epochs, imgsz 960:
+
+| precision | recall | mAP50 | mAP50-95 |
+|---|---|---|---|
+| 0.739 | 0.711 | 0.771 | 0.579 |
+
+The labels are genuinely oriented, not axis-aligned boxes in disguise: all 80,844 are 9-field
+polygons, and 24.8 % deviate from axis-aligned by more than 10°, 6.3 % by more than 30°.
+
+`_deskew()` had a real defect until it was fixed here. YOLO-OBB's `xyxyxyxy` starts at an arbitrary
+corner of the rotated rect, where CRAFT returns corners in reading order, so Path A was handing
+EasyOCR crops that were mirrored or upside down. `_order_quad()` at `server/text_pipeline.py:64`
+fixes the corner order for both paths. No detection metric could have caught this — the boxes were
+right and the reading was empty.
+
 What is not in place:
 
-- The fine-tuned oriented detector is written but has never been trained. `_get_obb()` at
-  `server/text_pipeline.py:32` loads `models/text_obb.pt` (`server/config.py:6`), that file does not
-  exist, so Path A never runs and every reading comes from the CRAFT fallback. The live server says so:
-  `GET /api/health` reports `"text_obb": false`. The dataset converters and the training recipe are
-  present — `scripts/convert_icdar_to_obb.py`, `convert_synthtext_to_obb.py`,
-  `convert_cocotext_to_obb.py`, `train_text_obb_colab.py`, `scripts/train_obb.md`.
-- The web client does not use the orientation it receives: the overlay draws axis-aligned rectangles
-  (`web/app.js:498`) and adds a direction arrow (`web/app.js:517`), and neither reads `quad` or
-  `angle`. This costs nothing in speech — the spoken output needs only the text and the box — but the
-  overlay does not show that the text was found at an angle.
+- **Path A is not adopted.** `models/text_obb.pt` currently holds interrupted CPU weights
+  (mAP50 0.671), not the 0.771 run above, which was lost when a Colab VM recycled before its save
+  cell ran. The notebook now mirrors every epoch to Drive so that cannot repeat.
+- **It is not yet shown to read better than CRAFT.** The last A/B over 12 val images at 0/15/25/40°
+  tilt had CRAFT ahead on word recall at every angle, even after the deskew fix. Detection quality
+  and end-to-end reading are different questions, and only the second one matters here. Until that
+  A/B is re-run with the 0.771 weights, CRAFT stays the live detector and Path A is not switched on.
+- **The A/B is on street scenes, not corridors.** COCO-Text is signage in the wild; the deployment
+  is indoor signs — EXIT, WASHROOM, room numbers — photographed from a tilted phone. A dozen real
+  photos would turn the comparison into an answer about this product.
 
-So the objective is met in function, not by a model of our own. The accurate sentence for the report is
-"oriented text is detected as quadrilaterals by CRAFT and rectified before recognition; a YOLO-OBB
-detector is integrated and awaits training", not "we trained an oriented text detector".
+So the accurate sentence for the report is "an oriented text detector was trained on COCO-Text v2
+and reaches mAP50 0.771; the shipped reading path remains CRAFT quadrilaterals with perspective
+rectification, pending an end-to-end comparison", not "we replaced CRAFT with our own detector".
 
 ## Running it
 
