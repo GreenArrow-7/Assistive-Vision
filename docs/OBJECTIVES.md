@@ -11,7 +11,7 @@ behaviour, it points at the test or the README section that backs it.
 | 1 | Text recognition using OCR | Met | `server/text_pipeline.py`, text lane in `web/app.js:235` |
 | 2 | Voice interaction and keyword search | Met | `web/workflow.js`, `web/speech.js`, `server/symbols.py` |
 | 3 | Audio guidance and environment summary | Met, with one limit | `web/speech.js`, `web/realtime.js`, `web/app.js:265` |
-| 4 | Oriented text from natural scenes | Met; own detector trained, not yet adopted | `server/text_pipeline.py:172` (CRAFT quads, deskew, rotation retry), `models/text_obb.pt` |
+| 4 | Oriented text from natural scenes | Met; own OBB detector trained and adopted | `server/text_pipeline.py:183` (Path A: OBB quads, deskew, recognize), `models/text_obb.pt` |
 
 ## 1. Text recognition using OCR
 
@@ -123,7 +123,7 @@ COCO-Text val split, 60 epochs, imgsz 960:
 
 | precision | recall | mAP50 | mAP50-95 |
 |---|---|---|---|
-| 0.739 | 0.711 | 0.771 | 0.579 |
+| 0.738 | 0.712 | 0.772 | 0.579 |
 
 The labels are genuinely oriented, not axis-aligned boxes in disguise: all 80,844 are 9-field
 polygons, and 24.8 % deviate from axis-aligned by more than 10°, 6.3 % by more than 30°.
@@ -134,22 +134,42 @@ EasyOCR crops that were mirrored or upside down. `_order_quad()` at `server/text
 fixes the corner order for both paths. No detection metric could have caught this — the boxes were
 right and the reading was empty.
 
-What is not in place:
+Path A is adopted. The 60-epoch weights are installed at `models/text_obb.pt` and the live server
+runs on them. A second defect surfaced only once they were: `detect_text` passed the raw
+`xyxyxyxy` to `_quad_angle` while `_deskew` ordered the corners itself, so every reported angle was
+90 degrees out -- the tilted EXIT sign came back at -78.7 deg where CRAFT said 12.6 deg. The crop
+was correct and the text read, so no test and no detection metric could see it. Both now order the
+quad once, at `server/text_pipeline.py:188`.
 
-- **Path A is not adopted.** `models/text_obb.pt` currently holds interrupted CPU weights
-  (mAP50 0.671), not the 0.771 run above, which was lost when a Colab VM recycled before its save
-  cell ran. The notebook now mirrors every epoch to Drive so that cannot repeat.
-- **It is not yet shown to read better than CRAFT.** The last A/B over 12 val images at 0/15/25/40°
-  tilt had CRAFT ahead on word recall at every angle, even after the deskew fix. Detection quality
-  and end-to-end reading are different questions, and only the second one matters here. Until that
-  A/B is re-run with the 0.771 weights, CRAFT stays the live detector and Path A is not switched on.
-- **The A/B is on street scenes, not corridors.** COCO-Text is signage in the wild; the deployment
-  is indoor signs — EXIT, WASHROOM, room numbers — photographed from a tilted phone. A dozen real
-  photos would turn the comparison into an answer about this product.
+End-to-end comparison on the seven demo signs, both paths in-process, same frames:
 
-So the accurate sentence for the report is "an oriented text detector was trained on COCO-Text v2
-and reaches mAP50 0.771; the shipped reading path remains CRAFT quadrilaterals with perspective
-rectification, pending an end-to-end comparison", not "we replaced CRAFT with our own detector".
+| image | Path A | CRAFT |
+|---|---|---|
+| exit_tilted | `EXIT` @ 11.3 deg | `EXIT` @ 12.6 deg |
+| college_front | `atme` @ 19.9 deg | `atme` @ 21.4 deg |
+| pharmacy_room | `PHARMACY`, `ROOM 204` | `PHARMACY`, `ROOM 204` |
+| washroom_menu | `GENTS`, `MENU`, `WASHROOM` | same |
+| stairs_down_simulated | all four lines | all four lines |
+| cabin_signs | `PRINCIPAL`, `Mhold` | `CABIN` |
+| campus_steps | none | none |
+
+Path A matches CRAFT on five of seven, reads a tilted sign at the right angle, and runs in about
+320 ms against CRAFT's 1,900 ms. `cabin_signs` is a wash rather than a regression: the sign reads
+"PRINCIPAL CABIN" and each path gets half of it.
+
+What is still not in place:
+
+- **The comparison is on street-scene training data and seven demo photos, not corridors.**
+  COCO-Text is signage in the wild; the deployment is indoor signs photographed from a tilted
+  phone. A dozen real photos would turn this into an answer about this product rather than about
+  this dataset.
+- **No hybrid.** When Path A misses a region CRAFT would catch, as on `cabin_signs`, nothing falls
+  back. A Path A/Path B merge in `detect_text` would cover it and has not been written.
+
+So the accurate sentence for the report is "an oriented text detector was trained on COCO-Text v2,
+reaches mAP50 0.772, and is the shipped reading path; it matches the previous CRAFT pipeline on the
+demo signs at roughly six times the speed and reports sign orientation", not "it is measured better
+than CRAFT on indoor signage".
 
 ## Running it
 
