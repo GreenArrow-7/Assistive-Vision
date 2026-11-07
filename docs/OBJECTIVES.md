@@ -15,9 +15,9 @@ behaviour, it points at the test or the README section that backs it.
 
 ## 1. Text recognition using OCR
 
-- `server/text_pipeline.py:146` `detect_text()` — EasyOCR reading, one item per region:
+- `server/text_pipeline.py:172` `detect_text()` — EasyOCR reading, one item per region:
   `{label, box, conf, quad, angle, kind: "text"}`.
-- `server/text_pipeline.py:75` `useful_text()` — drops OCR garbage: 2 to 180 characters, at least 60 %
+- `server/text_pipeline.py:101` `useful_text()` — drops OCR garbage: 2 to 180 characters, at least 60 %
   alphanumeric, so room numbers and short signs survive and noise does not.
 - `server/config.py:12` `TEXT_CONF = 0.40` is the reading threshold; the client speaks text unasked
   only above `0.6` (`web/app.js:247`).
@@ -102,13 +102,13 @@ is handed to Google Maps after an explicit yes (`web/app.js:383` `openMaps`, URL
 
 What is in place:
 
-- `server/text_pipeline.py:146` — EasyOCR's CRAFT detector returns a quadrilateral per region, so
+- `server/text_pipeline.py:172` — EasyOCR's CRAFT detector returns a quadrilateral per region, so
   tilted text on signboards and labels is found as a quad, not as an upright box.
-- `server/text_pipeline.py:64` `_deskew()` — each quad is perspective-warped to horizontal before the
+- `server/text_pipeline.py:90` `_deskew()` — each quad is perspective-warped to horizontal before the
   characters are read, which is what makes an angled sign readable.
 - `server/text_pipeline.py:185` — a bounded retry re-reads an uncertain region at 90°, 180° and 270°
   and keeps the better score. At most two per frame, so the cost stays fixed.
-- `server/text_pipeline.py:94` `merge_text_lines()` — words on the same oriented baseline (within 12°)
+- `server/text_pipeline.py:120` `merge_text_lines()` — words on the same oriented baseline (within 12°)
   are joined in reading order, so a phrase search works on a tilted multi-word sign.
 - `angle` and `quad` reach the client: `server/main.py:267` `_pub()` passes every field
   through, and the overlay strokes the quad itself when one is present (`web/app.js:502`),
