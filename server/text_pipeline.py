@@ -186,7 +186,8 @@ def detect_text(frame_bgr):
         if res.obb is not None:
             for poly, conf in zip(res.obb.xyxyxyxy.cpu().numpy(),
                                   res.obb.conf.cpu().numpy()):
-                quad = poly.reshape(4, 2).tolist()
+                # Order once here: the reported angle and the crop must agree.
+                quad = _order_quad(poly).tolist()
                 roi = _deskew(frame_bgr, quad)
                 # Region is already detected and rectified; do not run CRAFT again.
                 out = reader.recognize(roi, detail=1, paragraph=False)
