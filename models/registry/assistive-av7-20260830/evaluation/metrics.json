@@ -1,0 +1,204 @@
+{
+ "COCO yolov8n": {
+  "per_class": {
+   "PERSON": {
+    "tp": 58,
+    "fp": 42,
+    "fn": 208,
+    "precision": 0.58,
+    "recall": 0.218
+   },
+   "CHAIR": {
+    "tp": 12,
+    "fp": 13,
+    "fn": 16,
+    "precision": 0.48,
+    "recall": 0.429
+   },
+   "TABLE": {
+    "tp": 2,
+    "fp": 0,
+    "fn": 15,
+    "precision": 1.0,
+    "recall": 0.118
+   },
+   "DOOR": null,
+   "STAIRS_UP": null,
+   "DUSTBIN": null,
+   "STAIRS_DOWN": null
+  },
+  "detections_per_image": 0.83,
+  "latency_ms_median": 45.1,
+  "model_size_mb": 6.55,
+  "overall_precision": 0.567,
+  "overall_recall": 0.232
+ },
+ "AV-6": {
+  "per_class": {
+   "PERSON": {
+    "tp": 31,
+    "fp": 14,
+    "fn": 235,
+    "precision": 0.689,
+    "recall": 0.117
+   },
+   "CHAIR": {
+    "tp": 6,
+    "fp": 12,
+    "fn": 22,
+    "precision": 0.333,
+    "recall": 0.214
+   },
+   "TABLE": {
+    "tp": 0,
+    "fp": 1,
+    "fn": 17,
+    "precision": 0.0,
+    "recall": 0.0
+   },
+   "DOOR": {
+    "tp": 62,
+    "fp": 27,
+    "fn": 226,
+    "precision": 0.697,
+    "recall": 0.215
+   },
+   "STAIRS_UP": {
+    "tp": 7,
+    "fp": 4,
+    "fn": 20,
+    "precision": 0.636,
+    "recall": 0.259
+   },
+   "DUSTBIN": {
+    "tp": 25,
+    "fp": 35,
+    "fn": 5,
+    "precision": 0.417,
+    "recall": 0.833
+   },
+   "STAIRS_DOWN": null
+  },
+  "detections_per_image": 0.67,
+  "latency_ms_median": 42.3,
+  "model_size_mb": 6.23,
+  "overall_precision": 0.585,
+  "overall_recall": 0.2
+ },
+ "AV-7": {
+  "per_class": {
+   "PERSON": {
+    "tp": 35,
+    "fp": 16,
+    "fn": 231,
+    "precision": 0.686,
+    "recall": 0.132
+   },
+   "CHAIR": {
+    "tp": 10,
+    "fp": 13,
+    "fn": 18,
+    "precision": 0.435,
+    "recall": 0.357
+   },
+   "TABLE": {
+    "tp": 1,
+    "fp": 2,
+    "fn": 16,
+    "precision": 0.333,
+    "recall": 0.059
+   },
+   "DOOR": {
+    "tp": 82,
+    "fp": 65,
+    "fn": 206,
+    "precision": 0.558,
+    "recall": 0.285
+   },
+   "STAIRS_UP": {
+    "tp": 12,
+    "fp": 9,
+    "fn": 15,
+    "precision": 0.571,
+    "recall": 0.444
+   },
+   "DUSTBIN": {
+    "tp": 24,
+    "fp": 29,
+    "fn": 6,
+    "precision": 0.453,
+    "recall": 0.8
+   },
+   "STAIRS_DOWN": {
+    "tp": 2,
+    "fp": 0,
+    "fn": 3,
+    "precision": 1.0,
+    "recall": 0.4
+   }
+  },
+  "detections_per_image": 0.89,
+  "latency_ms_median": 42.2,
+  "model_size_mb": 6.23,
+  "overall_precision": 0.553,
+  "overall_recall": 0.251
+ },
+ "Combined (AV-7 + COCO)": {
+  "per_class": {
+   "PERSON": {
+    "tp": 59,
+    "fp": 47,
+    "fn": 207,
+    "precision": 0.557,
+    "recall": 0.222
+   },
+   "CHAIR": {
+    "tp": 14,
+    "fp": 23,
+    "fn": 14,
+    "precision": 0.378,
+    "recall": 0.5
+   },
+   "TABLE": {
+    "tp": 3,
+    "fp": 2,
+    "fn": 14,
+    "precision": 0.6,
+    "recall": 0.176
+   },
+   "DOOR": {
+    "tp": 82,
+    "fp": 60,
+    "fn": 206,
+    "precision": 0.577,
+    "recall": 0.285
+   },
+   "STAIRS_UP": {
+    "tp": 12,
+    "fp": 9,
+    "fn": 15,
+    "precision": 0.571,
+    "recall": 0.444
+   },
+   "DUSTBIN": {
+    "tp": 24,
+    "fp": 28,
+    "fn": 6,
+    "precision": 0.462,
+    "recall": 0.8
+   },
+   "STAIRS_DOWN": {
+    "tp": 2,
+    "fp": 0,
+    "fn": 3,
+    "precision": 1.0,
+    "recall": 0.4
+   }
+  },
+  "detections_per_image": 1.53,
+  "latency_ms_median": 87.3,
+  "model_size_mb": 12.78,
+  "overall_precision": 0.537,
+  "overall_recall": 0.297
+ }
+}

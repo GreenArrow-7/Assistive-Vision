@@ -1,60 +1,93 @@
 # Project state
 
-Updated 2026-11-07. Claims here are measured or cite the file that backs them.
-The web/server system is the **prototype and model-evaluation environment**; the
-production target remains native Android (`../Nexora`).
+Updated 2026-11-08. Claims here are measured or cite the file that backs them.
 
-## Iteration completion criteria
+**Product direction changed this iteration.** The end-user application is a
+**web application and installable PWA** and nothing else. Native Android is out
+of scope: no Kotlin, no APK, no Play Store listing
+([ARCHITECTURE_RULINGS.md](ARCHITECTURE_RULINGS.md) R-007). This directory is
+therefore no longer "the prototype" — it is the product. Python, GPUs and server
+infrastructure remain, as training and evaluation infrastructure.
 
-| # | Criterion | State |
+Specifications live in [`specs/`](../specs): product
+([vision](../specs/01-product/PRODUCT_VISION.md),
+[requirements](../specs/01-product/PRODUCT_REQUIREMENTS.md)), architecture
+([system](../specs/02-architecture/SYSTEM_ARCHITECTURE.md),
+[AI](../specs/02-architecture/AI_ARCHITECTURE.md),
+[privacy](../specs/02-architecture/PRIVACY_ARCHITECTURE.md),
+[learning](../specs/02-architecture/LEARNING_ARCHITECTURE.md)),
+[plan](../specs/03-plan/IMPLEMENTATION_PLAN.md), web
+([frontend audit](../specs/04-web/FRONTEND_AUDIT.md),
+[inference strategy](../specs/04-web/WEB_INFERENCE_STRATEGY.md)), testing
+([browser matrix](../specs/05-testing/BROWSER_MATRIX.md),
+[definition of done](../specs/05-testing/DEFINITION_OF_DONE.md)).
+
+## Android toolchain blocker — CLOSED, not fixed
+
+The previous blocker (no JDK, no `JAVA_HOME`, no Android SDK) is closed because
+the target changed, not because anything was installed. No further time goes
+into Android tooling. `../Nexora` is left on disk, untouched and unused.
+
+The required development environment is now Node.js, a package manager, a
+browser, TypeScript tooling, and a Python environment for training and
+evaluation. Of those, only Python is actually set up: there is no
+`package.json`, no TypeScript and no build step in the repository today
+([FRONTEND_AUDIT.md](../specs/04-web/FRONTEND_AUDIT.md)).
+
+## This iteration's work
+
+| § | task | state |
 |---|---|---|
-| 1 | Speech-repeat fixes remain green | **met** — 230 Python, 4 Node suites |
-| 2 | AV-6 classified as experimental | **met** — superseded by AV-7, rulings R-004 |
-| 3 | Multi-provider architecture specified | **met** — `server/perception.py` |
-| 4 | COCO + AV coexist in the prototype | **met** — both live, verified through the public link |
-| 5 | Canonical class mapping exists | **met** — `perception.canonical()` |
-| 6 | Duplicate person detections fused | **met** — `perception.fuse()`, `tests/test_perception.py` |
-| 7 | Dataset readiness audit produced | **met** — [DATASET_STATUS.md](DATASET_STATUS.md) |
-| 8 | Evaluation dataset identified | **met** — `av7_split/val`, 336 images, no leakage |
-| 9 | Baseline model comparison produced | **met** — [MODEL_EVALUATION.md](MODEL_EVALUATION.md) |
-| 10 | AV-7 search documented | **met** — found; rulings R-002 |
-| 11 | Stairs-down limitation explicit | **met** — `STAIRS_DOWN_VALIDATED = False`, rulings R-005 |
-| 12 | Android toolchain rechecked | **met** — still blocked, see below |
-| 13 | PROJECT_STATE updated | this file |
+| 45.1–2 | Android removed from scope; blocker closed | **done** — R-007 |
+| 45.3–11 | Product, architecture, privacy, learning, DoD, plan specs | **done** — `specs/` |
+| 45.12 | Preserve AV-7 | **done** — `models/registry/assistive-av7-20260830/` |
+| 45.13 | Preserve `av7_split` | **done** — `datasets/av7_split`, 545 MB, plus `av7_merged` |
+| 45.14 | Correct validation/test terminology | **done** — R-008 |
+| 45.15 | Design `assistive_test_v1` | **done** — designed, not built |
+| 45.16 | Browser capability matrix | **done** — `specs/05-testing/BROWSER_MATRIX.md` |
+| 45.17 | Audit the web frontend | **done** — KEEP / REFACTOR / DELETE per component |
+| 45.18 | Decide what server/web code is retained | **done** — same audit |
+| 45.19 | Best browser inference strategy | **partial** — three strategies researched, none chosen; the deciding measurement needs a phone |
+| 45.20 | Benchmark the baseline in the web environment | **partial** — ONNX export measured on desktop; nothing measured in a browser |
+| 10 | Model registry with hashes and provenance | **done** — `scripts/register_model.py` |
+| 11 | Dataset manifest, hashes, recovery procedure | **done** — `scripts/dataset_manifest.py` |
+| 13 | Video leakage policy | **done** — enforced by source recording, zero overlap measured |
+| 18 | Dataset gap analysis | **done** — [DATASET_STATUS.md](DATASET_STATUS.md) |
+| 30 | Browser-compatible model export | **done** — ONNX, faster than PyTorch |
+| 19 | `stairs_down` stays experimental | **done** — R-005, unchanged |
+| 20 | Outdoor capability | **not done** — still unmeasured |
 
 ## Perception
 
-Two providers run per frame and are fused:
+Two providers run per frame and are fused ([R-003](ARCHITECTURE_RULINGS.md)):
 
 | provider | weights | vocabulary | authority |
 |---|---|---|---|
 | `general` | `yolov8n.pt` | COCO, 80 | vehicles, traffic light, dog, and `PERSON` jointly |
 | `assistive` | `av_obstacle.pt` (AV-7) | 7 AV classes | stairs, door, dustbin, and `PERSON` jointly |
 
-Measured: fused recall **0.297** against AV-7 alone 0.251 and COCO alone 0.232,
-on 336 held-out images. Warm latency **79 ms** for both providers against ~40 ms
-for one. Cadence (`every_n`) is configured per provider and both currently run on
-every frame — measure before raising either.
+Measured on 336 **validation** images: fused recall **0.297**, against AV-7
+alone 0.251 and COCO alone 0.232. Warm latency 79 ms for both providers against
+~40 ms for one. Exported to ONNX, both run faster than PyTorch (AV-7: 27.6 ms vs
+42.2 ms), at a cost of 21.6 MB gzipped to download both.
 
 **Recall is low in absolute terms.** The best configuration finds under a third
-of annotated objects. That is the honest state of detection quality and is not
-improved by the architecture work; the architecture stops the system having to
-choose which environment to fail in.
+of the annotated objects. That is the honest state of detection quality, it is
+not improved by any of the architecture or documentation work in this iteration,
+and it is the first priority.
 
 ## Announcement behaviour
 
-Fixed this iteration and now the baseline. Acceptance criteria, each pinned by a
-test in `tests/test_realtime.cjs`:
+The baseline, unchanged this iteration. Each criterion is pinned by a test in
+`tests/test_realtime.cjs`:
 
-1. An object briefly occluded is **not** re-announced as a new object. Track
-   lifetime (6.5 s) owns deletion, not the missed-frame counter.
+1. An object briefly occluded is **not** re-announced as a new object.
 2. A motionless object is announced **once**, however long it is observed.
 3. A re-announcement waits out a 4 s floor unless the object became critical or
    closed to half its distance.
 4. An approach is still reported — a chair closing from 10 steps announces at
    10, 5 and 2.
-5. A persistent condition backs off, doubling to a 4-minute cap, instead of
-   repeating every 30 s forever.
+5. A persistent condition backs off, doubling to a 4-minute cap.
 
 Detection quality and announcement quality are tracked separately. A quiet app
 with poor recall is not an improved app.
@@ -64,44 +97,35 @@ with poor recall is not an improved app.
 | limitation | evidence |
 |---|---|
 | Overall recall ≤ 0.30 | [MODEL_EVALUATION.md](MODEL_EVALUATION.md) |
-| Vehicle coverage asserted, never measured | no annotated outdoor set exists |
-| `stairs_down` unsupported | 65 training boxes, 5 validation instances |
-| `table` near-unlearnable | 92 instances; recall 0.06–0.18 |
-| No test split anywhere | every figure is a validation figure |
-| AV-7 weights and `av7_split` live only in a worktree | [DATASET_STATUS.md](DATASET_STATUS.md) |
-| Ultralytics AGPL-3.0 unresolved | rulings R-006 |
-
-## Android toolchain — still blocked
-
-Rechecked 2026-11-07:
-
-```
-java          : not found
-JAVA_HOME     : unset
-ANDROID_HOME  : unset
-ANDROID_SDK_ROOT : unset
-~/AppData/Local/Android/Sdk : absent
-```
-
-`../Nexora` has its Gradle wrapper, `app/`, and `build.gradle.kts`. Nothing can
-be compiled or tested until a JDK and the Android SDK are installed. `:core`
-compilation, `:core` tests and the debug build are all blocked on this, and it
-stays the highest-priority environment blocker. Per the brief, no further
-uncompiled Kotlin should be generated while this holds.
+| Vehicle and outdoor coverage asserted, never measured | no annotated outdoor set exists |
+| No locked test set | `assistive_test_v1` designed, not built |
+| `stairs_down` unsupported | 60 train boxes, 5 validation instances; R-005 |
+| `table` near-unlearnable | 75 train instances; recall 0.059 |
+| Walking surfaces, kerbs, ramps absent | need segmentation; no segmentation capability exists |
+| Camera frames leave the device on every frame | [PRIVACY_ARCHITECTURE.md](../specs/02-architecture/PRIVACY_ARCHITECTURE.md) |
+| API unauthenticated and unrate-limited | not acceptable for deployment (§38) |
+| Production path runs through a developer laptop | Cloudflare quick tunnel; §37 forbids it |
+| No PWA, no build, no workers, no TypeScript | [FRONTEND_AUDIT.md](../specs/04-web/FRONTEND_AUDIT.md) |
+| Nothing measured on a phone | [BROWSER_MATRIX.md](../specs/05-testing/BROWSER_MATRIX.md) |
+| Ultralytics AGPL-3.0 unresolved | R-006 |
 
 ## Next unblocked work, in order
 
-1. **Promote `av7_split` and the AV-7 weights out of the worktree.** The best
-   model and its data have one copy, inside a temporary directory.
-2. **Carve a test split** from existing data so figures stop being validation
-   figures.
-3. **An outdoor evaluation set.** Vehicle recall is the one safety claim with no
-   measurement behind it.
-4. **Shadow-test harness.** Would have caught AV-6's vehicle blindness before
+1. **Improve perception.** Recall 0.297 gates everything. Start with the indoor
+   part of `assistive_test_v1`, which can be carved from recordings already on
+   disk, then outdoor capture, then a larger backbone — the export numbers show
+   latency headroom at `yolov8n`'s 3M parameters.
+2. **Outdoor evaluation set.** The one safety claim with no measurement.
+3. **A deployed origin.** Blocks every browser benchmark, and §37 forbids the
+   current laptop dependency.
+4. **The web platform** — build, TypeScript, worker boundary, manifest, service
+   worker — around the components the audit marked KEEP.
+5. **Shadow-test harness.** Would have caught AV-6's vehicle blindness before
    deployment rather than after.
-5. **`stairs_down` footage** shot from the top of a staircase. Nothing public
+6. **`stairs_down` footage** shot from the top of a staircase. Nothing public
    supplies it.
 
-`scripts/evaluate.py` already exists in this project and was not used for the
-comparison above — the harness in `scratchpad/evaluate.py` was written fresh.
-Folding the per-class and fusion metrics into the existing script is open tidying.
+Open tidying, not on the critical path: the per-class and fusion metrics live in
+`scratchpad/evaluate.py` and belong in the existing `scripts/evaluate.py`; the
+`training/` consolidation §29 describes is partly satisfied by
+`models/registry/` and the manifest scripts.

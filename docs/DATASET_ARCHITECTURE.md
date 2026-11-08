@@ -59,9 +59,27 @@ product does not have.
 it. Label files written against a 14-class vocabulary mean something different
 under a 6-class one. `scripts/reindex_labels.py` maps by name for this reason.
 
-**Splits are by image content, not filename.** Duplicate frames from one video
-can otherwise land on both sides and inflate validation. Verified by MD5; current
-state is zero leakage.
+**Splits are isolated by source recording, not by file hash.** This is stronger
+than the rule it replaces, and it had to be: these images are video frames, and
+frame 00699 and frame 00700 of one walkthrough have different hashes and nearly
+identical content, so a hash check can report no leakage while a model is
+validated on its own training data. One recording goes entirely to one split.
+`scripts/dataset_manifest.py` groups by source and exits non-zero on a
+violation, so it can gate the pipeline. `av7_split` passes: 1,157 training
+sources, 252 validation sources, none shared
+([ARCHITECTURE_RULINGS.md](ARCHITECTURE_RULINGS.md) R-008).
+
+**A locked test set is read, at most, once per promotion decision.** Never for
+model selection, threshold tuning, architecture choice, early stopping or
+hyperparameters. `av7_split/val` is **not** one — both AV models selected on it,
+so every figure derived from it is a validation figure. `assistive_test_v1` is
+designed in [DATASET_STATUS.md](DATASET_STATUS.md) and not built.
+
+**A registered model is identified by what is inside the file.**
+`scripts/register_model.py` reads the class names, training date and config out
+of the checkpoint, derives the registry key from them, and records both hashes,
+the size, the dataset id and the licensing position. A weight file with no class
+names inside it is refused rather than registered under a guess.
 
 **A model is identified by its class names.** Never by its path or filename. Two
 files named `av_obstacle_candidate.pt` differed by one class and 1,088 bytes, and
@@ -89,11 +107,17 @@ project owns no annotated outdoor set.
 | candidate → evaluation | **new**, `scratchpad/evaluate.py`; not yet a project script |
 | evaluation → shadow test | **not built** |
 | shadow → safety review | **not built**; no recall gate exists |
+| **evaluation → browser benchmark** | **not built**; nothing measured on a phone |
+| manifest and leakage gate | **works**, `scripts/dataset_manifest.py` |
+| model registry | **works**, `scripts/register_model.py` |
+| web export | **works**, ONNX; filed under the registry entry's `exports/` |
 | promotion | manual file copy plus a config path |
-| rollback | manual; previous candidates retained in `models/` |
-| test split | **does not exist** for any dataset |
+| rollback | manual; previous candidates retained in `models/registry/` |
+| locked test split | **does not exist** for any dataset |
 
-The two that matter most are the missing **test split** — every number the
-project reports is a validation number — and the missing **shadow test**, which
-is what would have caught AV-6's vehicle blindness before deployment rather than
-after.
+Three gaps matter most. The missing **locked test set** means every number the
+project reports is a validation number. The missing **shadow test** is what
+would have caught AV-6's vehicle blindness before deployment rather than after.
+And the missing **browser benchmark** means a model could pass every gate above
+and still be unusable on the device the product runs on — which §42 of the
+current brief forbids promoting on.

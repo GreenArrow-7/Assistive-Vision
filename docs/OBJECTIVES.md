@@ -1,8 +1,9 @@
 # Objectives and where they are implemented
 
 The four stated project objectives, mapped to the code that carries them out. The deliverable is the
-**web client** (`web/`) served by the FastAPI server (`server/`); the Android client lives in
-`../Nexora` and is covered at the end. Checked on 2026-11-01 against the working tree of both folders.
+**web client** (`web/`) served by the FastAPI server (`server/`) — and since 2026-11-08 that is the
+*only* deliverable, the product being web-only (R-007). The Android client in `../Nexora` is out of
+scope and is covered at the end for the record only. Checked on 2026-11-01 against the working tree of both folders.
 Every claim cites a file and a line. Nothing was measured for this document: where a claim is about
 behaviour, it points at the test or the README section that backs it.
 
@@ -185,9 +186,17 @@ testing" in this repository's README. Verified on 2026-11-01: the page answered 
 reported `ready:true, demo:true` on `localhost:8000`, on the LAN at `https://192.168.0.104:8443`, and
 through the tunnel.
 
-## The Android client
+## The Android client — out of scope since 2026-11-08
 
-`../Nexora/app/` is a second front end over the same server and the same four objectives. It is kept
+> The product is now **web-only**: a browser application and installable PWA.
+> There is no Android client in scope
+> ([ARCHITECTURE_RULINGS.md](ARCHITECTURE_RULINGS.md) R-007). This section is
+> kept as a record of what was measured while it was in scope, and `../Nexora`
+> is left on disk untouched. Nothing below is a current requirement. The one
+> thing worth porting is the evidence it cites — the `ReplayTest` walkthrough
+> transcripts — because the browser client has no equivalent.
+
+`../Nexora/app/` was a second front end over the same server and the same four objectives. It was kept
 because it carries evidence the browser client does not: `ReplayTest` replays three recorded walks
 through the real announcement logic and the real speech queue in virtual time, with the accepted
 transcripts in `../Nexora/docs/replay/` as fixtures, and the measured before/after table in

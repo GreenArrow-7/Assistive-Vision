@@ -111,3 +111,61 @@ Every model in the project derives from Ultralytics YOLOv8 weights, which are
 AGPL-3.0. Distributing a product built on them carries obligations nobody has
 decided on. Recorded here because it affects shipping, not accuracy, and has no
 owner.
+
+---
+
+## R-007 — The product is web-only; native Android is out of scope
+
+**Date** 2026-11-08 · **Status** settled by the product owner
+
+The end-user application is a web application and installable PWA, running in a
+mobile browser. There is no Android application, no Kotlin, no Jetpack Compose,
+no CameraX, no Android SDK integration, foreground service, Room database,
+Keystore use, APK or Play Store listing. Every earlier requirement for native
+Android is superseded.
+
+This is a product-owner decision, not an engineering conclusion, and it is not
+reopened by evidence about what a native app could do better. It is reopened
+only if the product owner changes the requirement.
+
+Consequences applied:
+
+- The Android toolchain blocker is **closed, not fixed**. The absence of a JDK,
+  Android Studio and the Android SDK stopped being relevant the moment the
+  target changed; no further time goes into installing them. `../Nexora` is left
+  on disk and untouched.
+- Android-specific completion criteria are removed from the definition of done
+  and replaced with web and PWA criteria
+  ([specs/05-testing/DEFINITION_OF_DONE.md](../specs/05-testing/DEFINITION_OF_DONE.md)).
+- The web and server code stops being "the prototype". It is the product.
+- Python, GPUs and server infrastructure remain in use for training and
+  evaluation. That is engineering infrastructure and does not contradict the
+  web-only requirement.
+
+---
+
+## R-008 — `av7_split/val` is validation data, not a test set
+
+**Date** 2026-11-08 · **Status** settled
+
+Both AV models used `av7_split/val` for model selection, so it cannot serve as
+an independent test set, and describing it as one would overstate every figure
+the project reports.
+
+Two things were done rather than one. First, the terminology is corrected
+everywhere: these are validation numbers. Second, the leakage check was made
+stronger than the hash check it replaced — these images are video frames, where
+adjacent frames differ in bytes and not in content, so hashing can report no
+leakage while a model is validated on its own training data. `av7_split` was
+re-checked by **source recording** and has zero overlap: 1,157 training sources,
+252 validation sources, none shared.
+
+The standing policy: splits are isolated by source recording, session,
+environment and location — never by file hash alone. One recording goes entirely
+to one split. `scripts/dataset_manifest.py` enforces this and exits non-zero on
+a violation.
+
+A locked set, `assistive_test_v1`, is designed in
+[DATASET_STATUS.md](DATASET_STATUS.md). It is not built: part of it can be
+carved from existing recordings, and the outdoor and stairs-down portions need
+filming that does not exist and cannot be sourced publicly.

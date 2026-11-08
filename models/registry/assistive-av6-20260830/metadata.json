@@ -1,0 +1,37 @@
+{
+ "model_id": "assistive-av6-20260830",
+ "status": "superseded",
+ "registered_from": "models/av6_640_candidate.pt",
+ "dataset_id": "assistive_av6@1",
+ "licensing": {
+  "base": "Ultralytics YOLOv8",
+  "license": "AGPL-3.0",
+  "redistribution_cleared": false
+ },
+ "metrics": null,
+ "notes": "Superseded by AV-7 on every shared class (ARCHITECTURE_RULINGS R-004). Kept as a rollback artefact.",
+ "class_names": [
+  "person",
+  "chair",
+  "table",
+  "door",
+  "stairs_up",
+  "dustbin"
+ ],
+ "trained_at": "2026-08-30T00:23:04.814668",
+ "trainer_version": "8.4.95",
+ "train_config": {
+  "model": "yolov8n.pt",
+  "data": "C:\\Users\\admin\\Downloads\\Assistive-Vision\\datasets\\av6_split\\data.yaml",
+  "epochs": 40,
+  "patience": 12,
+  "batch": 8,
+  "imgsz": 640,
+  "optimizer": "auto",
+  "lr0": 0.01,
+  "seed": 0
+ },
+ "sha256": "67354d274cc3e9fc456306c875dcfc43cf8bfcbb92f5543d6f60b0a010d6ae6e",
+ "md5": "c40217621a1575f9ff47796c1d5b5730",
+ "size_bytes": 6226154
+}

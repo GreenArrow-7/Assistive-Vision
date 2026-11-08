@@ -5,12 +5,17 @@ matching per canonical class. Every figure below came out of
 `scratchpad/evaluate.py`; nothing is projected or carried over from a training
 log.
 
-**What this set is, and is not.** It is the validation split both AV models used
-for model selection, so it flatters them in the same way and to the same degree.
-Neither model trained on these images (verified by hash, see
-[DATASET_STATUS.md](DATASET_STATUS.md)), and COCO has never seen them at all.
-There is no true test split anywhere in the project. Read these as validation
-numbers.
+**What this set is, and is not.** It is **validation data, not a test set.** Both
+AV models used it for model selection, so it flatters them in the same way and to
+the same degree. Neither model trained on these images — verified twice over:
+no identical images by hash, and **no shared source recordings**, which is the
+check that matters for video frames (see
+[DATASET_STATUS.md](DATASET_STATUS.md)). COCO has never seen them at all.
+
+There is no locked test set anywhere in the project. `assistive_test_v1` is
+designed in DATASET_STATUS.md and not built. Until it is, every figure below is
+a validation figure and must be described as one; none of them is an estimate of
+field performance.
 
 `not in vocabulary` means the model has no such class. It is not a score of
 zero, and must never be reported as one.
@@ -84,6 +89,19 @@ set is open work.
 `STAIRS_DOWN` is measured on five instances. That is a sample size, not evidence.
 The class stays marked `UNSUPPORTED_BY_CURRENT_MODEL` in `server/classes_av.py`
 and is announced without a claimed direction.
+
+## Browser deployability
+
+A model is not promotable on desktop Python numbers alone (§42). Both providers
+export to ONNX cleanly, and ONNX Runtime is **faster** than PyTorch on the same
+CPU — 27.6 ms vs 42.2 ms for AV-7 — so leaving `.pt` behind costs nothing. The
+cost is the download: 25.1 MB raw, 21.6 MB gzipped for both providers, before
+the application can see anything.
+
+These are desktop x86 with native ONNX Runtime, which is a *floor* no browser
+runtime will beat, not an estimate. Full figures and the strategy question:
+[specs/04-web/WEB_INFERENCE_STRATEGY.md](../specs/04-web/WEB_INFERENCE_STRATEGY.md).
+Nothing has been measured on a phone.
 
 ## Reproducing
 

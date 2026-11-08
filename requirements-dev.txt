@@ -3,3 +3,8 @@ pytest==9.1.1
 httpx==0.28.1               # fastapi TestClient (tests/test_api_limits.py)
 scipy==1.17.1               # scripts/evaluate.py + converter tests
 pillow==12.2.0
+# Browser-deployment export and its latency floor (specs/04-web/WEB_INFERENCE_STRATEGY.md).
+# Export-time only: the server never loads an ONNX graph.
+onnx==1.23.2
+onnxruntime==1.31.1
+onnxslim==0.1.99
