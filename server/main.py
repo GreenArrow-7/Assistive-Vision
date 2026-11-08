@@ -1,11 +1,16 @@
-"""Assistive Vision — FastAPI server (hardened).
+"""Nexora assistive vision: FastAPI server for the web client and the Android app.
 
-POST /analyze   multipart: frame=<jpeg>, keyword=<optional str>
-GET  /          mobile web app
-GET  /health    {ready, warming, object_model, text_obb}
+GET  /                      web client
+GET  /api/health            readiness, model schema, failed components, demo flag
+GET  /api/config            public client options
+POST /api/detect/objects    multipart frame -> objects and hazards (one request per lane)
+POST /api/detect/text       multipart frame, optional keyword -> oriented text and search match
+POST /api/analyze/frame     both lanes in one request (also /analyze, /api/search, /api/environment)
+POST /api/navigation        destination, optional position -> real distance and time, or the reason there is none
+POST /api/uber/estimate     fare only from Uber's API when a server token is configured
+GET  /api/demo/scenes       recorded scenes, only when DEMO_MODE=true
 
-Run:  python -m server.main            (or)
-      uvicorn server.main:app --host 0.0.0.0 --port 8000
+Run:  run.cmd, run_demo.cmd  (or)  uvicorn server.main:app --host 0.0.0.0 --port 8000
 """
 import threading
 import time
@@ -13,7 +18,8 @@ import traceback
 import uuid
 import logging
 from typing import Literal
-from .navigation import NavigationRequest, MapsHandoffProvider
+from .navigation import NavigationRequest, RouteProvider, maps_url
+from .uber import UberEstimateRequest, estimate as uber_estimate
 from .interfaces import LocalTextDetector, LocalObjectDetector
 from .upload_limit import UploadLimit
 from contextlib import asynccontextmanager
@@ -24,7 +30,7 @@ import numpy as np
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from . import (classes_av, config, detector, priority, spatial, symbols,
+from . import (classes_av, config, demo, detector, perception, priority, spatial, symbols,
                text_pipeline)
 
 VERSION = "1.9"
@@ -34,8 +40,10 @@ if not logger.handlers:
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter('%(asctime)s level=%(levelname)s %(message)s'))
     logger.addHandler(handler)
-object_provider = LocalObjectDetector()
-text_provider = LocalTextDetector()
+# DEMO_MODE swaps the model adapters for players of recorded detections; the
+# rest of the pipeline is the normal live code. See server/demo.py.
+object_provider = demo.DemoObjectDetector() if demo.ENABLED else LocalObjectDetector()
+text_provider = demo.DemoTextDetector() if demo.ENABLED else LocalTextDetector()
 WEB = Path(__file__).resolve().parent.parent / "web" / "index.html"
 
 # ML models are not thread-safe; serialize inference.
@@ -63,10 +71,11 @@ SESSION_TTL_S = 120
 # waiting longer than this can only produce work nobody is still listening for.
 INFER_WAIT_S = 10.0
 
-# /analyze burns 1-3 s of CPU per call and needs no credentials, so an
-# unthrottled one is free compute for anyone who finds the URL. A live session
-# sends a frame every 2.6 s (~23/min); 60 leaves headroom for scans on top.
-RATE_LIMIT = 180             # requests per window, per client IP
+# Detection needs no credentials, so it is throttled per client IP. Each client
+# runs two lanes that pause FRAME_INTERVAL / OCR_INTERVAL_MS between completed
+# requests (350 ms / 2000 ms => at most 171 + 30 = 201 per minute when responses
+# are instant, as in demo mode). Allow two such clients behind one address.
+RATE_LIMIT = max(180, 2 * (60_000 // config.FRAME_INTERVAL + 60_000 // config.OCR_INTERVAL_MS))
 RATE_WINDOW_S = 60
 MAX_TRACKED_IPS = 2000
 
@@ -76,12 +85,25 @@ _rate_lock = threading.Lock()
 
 # ---------------------------------------------------------------- warmup
 def _warmup():
+    if demo.ENABLED:
+        # Nothing to load: recorded detections are replayed (server/demo.py).
+        try:
+            count = len(demo.scenes())
+            _state.update(ready=True, error=None, components={})
+        except Exception:
+            count = 0
+            logger.exception("demo_data_unavailable")
+            _state.update(ready=False, error="Demo data unavailable.",
+                          components={"demo": "Record it with scripts/record_demo.py."})
+        _state["warming"] = False
+        logger.info("startup demo_mode=true ready=%s scenes=%d", _state["ready"], count)
+        return
     _state["warming"] = True
     import torch
     torch.set_num_threads(config.INFERENCE_THREADS)
     cv2.setNumThreads(1)
     failures = {}
-    for name, loader in (("objects", detector._get_model), ("ocr", text_pipeline._get_reader),
+    for name, loader in (("objects", perception.warmup), ("ocr", text_pipeline._get_reader),
                          ("oriented_text", text_pipeline._get_obb)):
         try:
             loader()
@@ -102,7 +124,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Assistive Vision API", version=VERSION, lifespan=lifespan)
+app = FastAPI(title="Nexora Assistive Vision API", version=VERSION, lifespan=lifespan)
 app.add_middleware(UploadLimit, max_bytes=MAX_UPLOAD_BYTES)
 
 
@@ -150,7 +172,7 @@ async def rate_limit(request: Request, call_next):
     served by this same app (`API = location.origin`), so it is same-origin and
     never needed them — they only let third-party sites spend our CPU.
     """
-    if request.url.path in {"/analyze", "/api/analyze/frame", "/api/search", "/api/environment", "/api/detect/text", "/api/detect/objects"}:
+    if request.url.path in {"/analyze", "/api/analyze/frame", "/api/search", "/api/environment", "/api/detect/text", "/api/detect/objects", "/api/navigation", "/api/uber/estimate"}:
         # ponytail: X-Forwarded-For is spoofable when not behind a proxy. This
         # deploys behind HF Spaces / cloudflared, which both set it; keying on
         # request.client.host there would bucket every user into one counter.
@@ -213,22 +235,31 @@ def health():
         "version": VERSION,
         "ready": _state["ready"],
         "warming": _state["warming"],
-        "error": "Vision models unavailable. Check server logs." if _state["error"] else None,
-        "object_model": Path(config.OBJECT_MODEL_CUSTOM if detector.active_schema() == detector.SCHEMA_AV else config.OBJECT_MODEL).name,
+        # In demo mode no model is loaded, so the only possible cause is the recording itself.
+        "error": (_state["error"] if demo.ENABLED else "Vision models unavailable. Check server logs.") if _state["error"] else None,
+        # Demo mode replays recorded detections: say so, and report the model
+        # that produced the recording rather than one that is not loaded.
+        "demo": demo.ENABLED,
+        "object_model": (demo.meta().get("object_model", "recorded") if demo.ENABLED else
+                         Path(config.OBJECT_MODEL_CUSTOM if detector.active_schema() != detector.SCHEMA_COCO else config.OBJECT_MODEL).name),
         # the schema the loaded model actually speaks, not which file was found:
         # "av6" | "coco" | null (not loaded). A model whose classes match
         # neither is refused at warmup and surfaces here as an "error".
-        "object_schema": detector.active_schema(),
+        "object_schema": demo.meta().get("object_schema") if demo.ENABLED else detector.active_schema(),
         # Can the loaded model raise the interrupt-everything alert at all?
-        # AV_CRITICAL names stairs_down, which is annotated but not trained, so
-        # the "Warning! Stop and proceed carefully" branch is currently
-        # unreachable. A hazard system that cannot fire its top alert must say
-        # so out loud rather than leave the caller to assume it works.
+        # AV_CRITICAL names stairs_down. The AV-7 weights DO carry the class now,
+        # but on 65 training boxes and 5 validation instances, so it is not in
+        # the trained schema and this branch stays unreachable (rulings R-005).
+        # A hazard system that cannot fire its top alert must say so out loud
+        # rather than leave the caller to assume it works.
         "critical_alert": detector.active_schema() is not None,
         "descending_stairs_alert": (detector.active_schema() == detector.SCHEMA_AV
                            and classes_av.CRITICAL_ACTIVE),
         "dormant_hazards": sorted(classes_av.DORMANT_HAZARDS),
         "text_obb": obb,
+        # Several detectors now contribute; one model name no longer describes
+        # what the system can see, so the whole roster is reported.
+        "providers": perception.status(),
         "components": _state.get("components", {}),
     }
     # 503 on a failed warmup. A 200 here told the orchestrator the container was
@@ -332,10 +363,12 @@ def _ocr_due(gate: str) -> bool:
 def analyze(request: Request, frame: UploadFile = File(...), keyword: str = Form("", max_length=200),
             mode: Literal["single", "live"] = Form("single"), session: str = Form(""),
             component: Literal["all", "objects", "text"] = Form("all"),
-            pitch: float = Form(0.0, ge=-90, le=90), vfov: float = Form(0.0, ge=0, le=90)):
+            pitch: float = Form(0.0, ge=-90, le=90), vfov: float = Form(0.0, ge=0, le=90),
+            scene: int = Form(-1, ge=-1, le=999)):
     if not _state["ready"]:
-        msg = "AI models failed to load. Check server logs." if _state["error"] \
-            else "AI models are still loading on the server. Please wait."
+        msg = (_state["error"] + " Record it with scripts/record_demo.py." if demo.ENABLED and _state["error"]
+               else "AI models failed to load. Check server logs." if _state["error"]
+               else "AI models are still loading on the server. Please wait.")
         return JSONResponse({"error": msg, "warming": _state["warming"]},
                             status_code=503)
 
@@ -360,6 +393,12 @@ def analyze(request: Request, frame: UploadFile = File(...), keyword: str = Form
     if img is None:
         return JSONResponse({"error": "Could not decode image."}, status_code=400)
     session = session[:MAX_SESSION_LEN]
+    if demo.ENABLED:
+        # One scene per request: a client may pin the one it is showing; otherwise the clock is read
+        # once, so the detections, the caption and the "simulated" flag always belong together.
+        demo.select(scene)
+        if scene < 0:
+            demo.select(demo.scene_index())
 
     # bound latency: downscale huge frames
     h0, w0 = img.shape[:2]
@@ -367,13 +406,20 @@ def analyze(request: Request, frame: UploadFile = File(...), keyword: str = Form
     if scale < 1.0:
         img = cv2.resize(img, (int(w0 * scale), int(h0 * scale)),
                          interpolation=cv2.INTER_AREA)
+    if demo.ENABLED:
+        # A replay is exactly what was recorded. The uploaded frame's shape and the phone's tilt or
+        # calibration must not change a recorded distance or turn a recorded caution into a warning.
+        rw, rh = demo.frame_size()
+        img = np.zeros((rh, rw, 3), np.uint8)
+        pitch, vfov = 0.0, 0.0
     h, w = img.shape[:2]
 
     # Quality is metadata, not a hard stop: slightly blurred frames can contain
     # usable objects/text. Never require the user to steer or steady the camera.
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-    quality = "limited" if sharpness < config.BLUR_THRESHOLD else "normal"
+    # In demo mode the uploaded frame is not what is analysed, so its blur says nothing.
+    quality = "limited" if sharpness < config.BLUR_THRESHOLD and not demo.ENABLED else "normal"
     if request.url.path == "/api/detect/objects": component = "objects"
     if request.url.path == "/api/detect/text": component = "text"
     run_objects = component != "text"
@@ -436,6 +482,8 @@ def analyze(request: Request, frame: UploadFile = File(...), keyword: str = Form
     speech_priority = 0 if out["speech"].startswith("Warning!") else (1 if out["hazard_count"] else 2 if match else 3)
     if component_errors:
         out["speech"] = " ".join(component_errors) + " " + out["speech"]
+    if demo.ENABLED and demo.current_scene().get("simulated") and (objects or close_hz or texts):
+        out["speech"] = "Simulated. " + out["speech"]      # hand-written scene: never spoken as a detection
     logger.info("frame_analyzed ms=%d objects=%d texts=%d errors=%d",
                 (time.time()-t0)*1000, len(objects)+len(close_hz), len(texts), len(component_errors))
 
@@ -457,7 +505,30 @@ def analyze(request: Request, frame: UploadFile = File(...), keyword: str = Form
         "symbols": _pub(syms),
         "frame": {"w": w, "h": h},
         "ms": round((time.time() - t0) * 1000),
+        # Recorded detections, never live: clients must say so (server/demo.py).
+        "demo": demo.ENABLED,
+        "scene": demo.public_scene() if demo.ENABLED else None,
     }
+
+
+@app.get("/api/demo/scenes")
+def demo_scenes():
+    """Captions and picture URLs of the recorded scenes (demo mode only)."""
+    if not demo.ENABLED:
+        return JSONResponse({"error": "Demo mode is off."}, status_code=404)
+    if not _state["ready"]:
+        return JSONResponse({"error": _state["error"] or "Demo data is loading."}, status_code=503)
+    return {"scenes": demo.public_scenes(), "meta": demo.meta(),
+            "keywords": demo.data().get("keywords", []),
+            "routes": [r["query"] for r in demo.data().get("routes", [])]}
+
+
+@app.get("/demo/images/{name}")
+def demo_image(name: str):
+    path = demo.image_path(name) if demo.ENABLED else None
+    if path is None or not path.exists():
+        return Response(status_code=404)
+    return FileResponse(path, media_type="image/jpeg")
 
 
 @app.get("/api/config")
@@ -471,7 +542,31 @@ def client_config():
 
 @app.post("/api/navigation")
 def navigate(request: NavigationRequest):
-    return MapsHandoffProvider().route(request.destination, request.latitude, request.longitude)
+    """Resolve the destination and, with a current location, real route metrics.
+
+    Sync on purpose: the geocoder and router are blocking HTTP calls with
+    timeouts; FastAPI runs this in a worker thread so /health stays responsive.
+    """
+    out = RouteProvider().route(request.destination, request.latitude, request.longitude)
+    out["demo"] = False
+    if demo.ENABLED and not out["resolved"]:
+        # Live geocoding or routing failed during a demo: fall back to a route
+        # that was recorded from the same services, and label it as recorded.
+        recorded = demo.recorded_route(request.destination) if _state["ready"] else None
+        if recorded is not None:
+            out = recorded
+            # The link starts from where the user is (or lets Maps choose), not from the recorded origin.
+            out["maps_url"] = maps_url(f"{out['dest_lat']},{out['dest_lon']}", request.latitude, request.longitude)
+    logger.info("destination_resolved resolved=%s error=%s demo=%s", out["resolved"], out["error"], out["demo"])
+    return out
+
+
+@app.post("/api/uber/estimate")
+def uber_fare(request: UberEstimateRequest):
+    """Fare only from Uber's approved API; `available: false` otherwise."""
+    out = uber_estimate(request)
+    logger.info("uber_estimate available=%s reason=%s", out["available"], out["reason"])
+    return out
 
 
 if __name__ == "__main__":  # python -m server.main

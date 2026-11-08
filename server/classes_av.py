@@ -92,9 +92,19 @@ AV_HEIGHTS = {
 }
 
 # Spoken names (sign_washroom -> "washroom sign")
+# STAIRS_DOWN = UNSUPPORTED_BY_CURRENT_MODEL.
+# The AV-7 weights do carry the class, but it was trained on 65 boxes and
+# measured on 5 validation instances (recall 0.4). That is not enough to tell a
+# blind user a staircase descends -- the one error that ends in a fall. Until it
+# is trained and measured properly the detection is surfaced WITHOUT a claimed
+# direction, which is why the spoken name below hedges. Do not "fix" this by
+# restoring "stairs going down": the wording is the safety control.
+STAIRS_DOWN_VALIDATED = False
+
 AV_SPOKEN = {
     "stairs_up": "stairs going up",
-    "stairs_down": "stairs going down",
+    "stairs_down": ("stairs going down" if STAIRS_DOWN_VALIDATED else
+                    "stairs, and I cannot reliably tell whether they go up or down"),
     "sign_washroom": "washroom sign",
     "sign_exit": "exit sign",
     "sign_lift": "lift sign",

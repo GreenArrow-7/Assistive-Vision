@@ -4,6 +4,17 @@
 OBJECT_MODEL = "yolov8n.pt"          # COCO-pretrained, auto-downloads on first run
 OBJECT_MODEL_CUSTOM = "models/av_obstacle.pt"  # your fine-tuned model (auto-used if present)
 TEXT_OBB_MODEL = "models/text_obb.pt"  # optional fine-tuned YOLO-OBB text model
+# ---------- Perception providers ----------
+# Several detectors run together and their output is fused in server/perception.py.
+# One model cannot cover both environments the product targets: COCO knows cars
+# and not stairs, the AV fine-tune knows stairs and has never seen a car.
+# `every_n` is the FrameScheduler cadence -- 1 means every frame. Raise it for a
+# provider whose classes do not move quickly, once latency has been MEASURED.
+PERCEPTION_PROVIDERS = [
+    {"id": "general",   "path": OBJECT_MODEL,        "every_n": 1},
+    {"id": "assistive", "path": OBJECT_MODEL_CUSTOM, "every_n": 1},
+]
+
 OCR_LANGS = ["en"]
 OCR_GPU = False                       # set True if CUDA available
 
@@ -46,7 +57,8 @@ SYMBOL_FROM_CLASS = {
     "traffic light": "traffic signal",
 }
 SYMBOL_KEYWORDS = {
-    "washroom":        ["washroom", "restroom", "toilet", "wc", "gents", "ladies", "men", "women"],
+    "washroom":        ["washroom", "restroom", "toilet", "bathroom", "wc", "gents", "ladies", "men", "women",
+                        "men's room", "women's room"],
     "emergency exit":  ["emergency exit", "fire exit"],
     "exit": ["exit", "way out"],
     "elevator":        ["lift", "elevator"],
@@ -58,6 +70,10 @@ SYMBOL_KEYWORDS = {
     "pharmacy":        ["pharmacy", "chemist", "medical", "dispensary"],
     "stairs":          ["stairs", "staircase", "steps"],
 }
+# Group members that are NOT interchangeable with the rest of their group: a
+# search for "ladies" must never resolve to a GENTS sign, nor "p1" to P2. They
+# still identify the symbol on a sign; they are just not expanded as synonyms.
+SPECIFIC_KEYWORDS = {"men", "women", "gents", "ladies", "p1", "p2", "basement parking"}
 
 # words stripped from voice queries: "where is the exit" -> "exit"
 QUERY_STOPWORDS = {

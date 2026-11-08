@@ -5,12 +5,8 @@ A detection is a hazard if its class is in the active schema's hazard set AND
 it is close (proximity computed later); the raw split here is by class only —
 the priority engine re-ranks by proximity.
 """
-import os
-
 from . import config
-from .classes_av import AV_CLASSES, AV_HAZARDS, AV_SPOKEN
-
-_model = None
+from .classes_av import AV_ALL_CLASSES, AV_CLASSES, AV_HAZARDS, AV_SPOKEN
 
 # Which class vocabulary a loaded model speaks. Everything downstream —
 # hazard set, spoken names, class filtering — branches on this.
@@ -37,8 +33,13 @@ def detect_schema(names) -> str:
     set we cannot establish is worse than no detector at all.
     """
     labels = {str(v) for v in names.values()}
-    if labels == set(AV_CLASSES):
-        return SCHEMA_AV
+    # Any model over our own vocabulary, as long as it carries the trained core.
+    # Pinning this to exactly AV_CLASSES refused the AV-7 weights -- which are
+    # the six plus stairs_down -- so un-retiring a class could not be deployed
+    # without editing this function. The id still counts the model's OWN labels,
+    # so it can never claim a class the weights do not have.
+    if labels <= set(AV_ALL_CLASSES) and set(AV_CLASSES) <= labels:
+        return f"av{len(labels)}"
     if config.HAZARD_CLASSES <= labels:      # COCO, or any superset of it
         return SCHEMA_COCO
     missing = sorted(config.HAZARD_CLASSES - labels)
@@ -51,54 +52,36 @@ def detect_schema(names) -> str:
     )
 
 
-def _get_model():
-    global _model
-    if _model is None:
-        from ultralytics import YOLO
-        path = config.OBJECT_MODEL_CUSTOM if os.path.exists(
-            config.OBJECT_MODEL_CUSTOM) else config.OBJECT_MODEL
-        model = YOLO(path)
-        # validate BEFORE publishing to the global: a rejected model must not
-        # leave a half-initialised _model behind for the next call to reuse
-        model._av_schema = detect_schema(model.names)
-        _model = model
-    return _model
-
-
 def active_schema():
-    """Schema of the loaded model, or None if it hasn't been loaded yet."""
-    return getattr(_model, "_av_schema", None) if _model is not None else None
+    """Schema in force for hazard lookup: the assistive provider's if loaded.
+
+    With several providers there is no single schema any more, so this reports
+    the one whose vocabulary names the indoor hazards; /health lists them all.
+    """
+    from . import perception
+    loaded = [p for p in perception.providers() if p.schema]
+    for p in loaded:
+        if p.schema != SCHEMA_COCO:
+            return p.schema
+    return loaded[0].schema if loaded else None
 
 
 def detect_objects(frame_bgr):
-    model = _get_model()
-    res = model.predict(frame_bgr, conf=config.OBJ_CONF, imgsz=config.IMAGE_SIZE, iou=config.NMS_THRESHOLD, device=config.DEVICE, verbose=False)[0]
+    """One fused detection stream from every configured provider.
+
+    The per-model work -- class filtering, confidence gates, spoken names --
+    moved to perception.Provider; what is left here is the split the rest of the
+    server expects, hazards from everything else.
+    """
+    from . import perception
     objects, hazards = [], []
-    names = res.names
-    if res.boxes is None:
-        return objects, hazards
-    av = model._av_schema == SCHEMA_AV
-    for xyxy, conf, cls in zip(res.boxes.xyxy.cpu().numpy(),
-                               res.boxes.conf.cpu().numpy(),
-                               res.boxes.cls.cpu().numpy()):
-        label = names[int(cls)]
-        # COCO base model: filter to curated classes; AV-6 model: keep all
-        if not av and label not in config.OBJECT_CLASSES:
-            continue
-        # noisy classes (person on blurry frames, soft furnishings) need
-        # a stricter gate than the global threshold
-        if float(conf) < config.CLASS_CONF.get(label, config.OBJ_CONF):
-            continue
-        spoken = AV_SPOKEN.get(label, label) if av else label
-        item = {
-            "label": spoken,
-            "raw": label,
-            "box": tuple(int(v) for v in xyxy),
-            "conf": float(conf),
-            "kind": "object",
-        }
-        hazard = (label in AV_HAZARDS) if av else (label in config.HAZARD_CLASSES)
-        if hazard:
+    for det in perception.observe(frame_bgr):
+        item = {k: det[k] for k in ("label", "raw", "box", "conf")}
+        item.update(kind="object", provider=det["provider_id"], model=det["model_id"],
+                    canonical=det["canonical"])
+        if det.get("agreed_by"):
+            item["agreed_by"] = det["agreed_by"]
+        if det["hazard"]:
             hazards.append({**item, "kind": "hazard"})
         else:
             objects.append(item)
