@@ -8,8 +8,8 @@
   }
   const center=b=>[(b[0]+b[2])/2,(b[1]+b[3])/2];
   class DetectionMemory {
-    constructor({ttl=6500,misses=3,persistence=2,move=.18}={}){
-      Object.assign(this,{ttl,maxMisses:misses,persistence,move});this.tracks=new Map();this.nextId=0;
+    constructor({ttl=6500,misses=3,persistence=2,move=.18,minRepeat=4000}={}){
+      Object.assign(this,{ttl,maxMisses:misses,persistence,move,minRepeat});this.tracks=new Map();this.nextId=0;
     }
     clear(){this.tracks.clear();}
     hide(lane){for(const t of this.tracks.values())if(t.lane===lane)t.active=false;}
@@ -31,12 +31,19 @@
         const changed=old&&(Math.hypot(...center(old.box).map((v,i)=>v-c[i]))>=this.move||
           (item.steps&&old.steps&&Math.abs(item.steps-old.steps)>=Math.max(2,old.steps*.35))||
           (!!item.critical&&!old.critical));
-        if(changed){track.spoken=null;track.searchSpoken=null;track.version++;}
+        // Becoming critical, or closing to half the distance, always re-announces. Lesser changes
+        // wait out minRepeat, so drifting boxes do not narrate every frame.
+        const urgent=(!!item.critical&&!old?.critical)||(old?.steps>0&&item.steps>0&&item.steps<=old.steps/2);
+        if(changed&&(urgent||!track.lastSpoken||now-track.lastSpoken>=this.minRepeat)){
+          track.spoken=null;track.searchSpoken=null;track.version++;
+        }
         track.stable=!!item.critical||track.count>=this.persistence;
         visible.push(track);
       }
       for(const [id,t] of this.tracks)if(t.lane===lane&&!assigned.has(id)){
-        t.misses++;t.active=false;if(t.misses>=this.maxMisses)this.tracks.delete(id);
+        // Not deleted here: ttl owns that. Dropping a track after a few missed frames made an
+        // object that was briefly occluded come back as a new one and be announced again.
+        t.misses++;t.active=false;
       }
       return visible; // Only current detections are rendered, never missed tracks.
     }
@@ -73,6 +80,15 @@
     const distance=item.steps?(item.steps>30?'far away':`approximately ${item.steps} ${item.steps===1?'step':'steps'}`):'';
     return [item.label,distance,item.direction||'ahead'].filter(Boolean).join(', ')+'.';
   }
+  // Signs and safety words are read; incidental text is not, unless it was asked for (same rule as the Android app).
+  const IMPORTANT_TEXT=/\b(exit|emergency|fire|pharmacy|washroom|restroom|toilet|wc|gents|ladies|men|women|lift|elevator|stairs|reception|parking|danger|caution|warning|stop|no entry|way out|entrance|help|information)\b/i;
+  const NUMBERED=/\b(room|gate|floor|platform|counter|bay|hall|ward)\s*\w*\d+/i;
+  function textIsImportant(label){
+    if(IMPORTANT_TEXT.test(label)||NUMBERED.test(label))return true;
+    // ponytail: short, mostly upper-case text is treated as a sign; a trained sign class would replace this.
+    const letters=[...label].filter(c=>/\p{L}/u.test(c));
+    return label.trim().split(/\s+/).length<=3&&letters.length>=2&&letters.filter(c=>c!==c.toLowerCase()).length>=letters.length*.7;
+  }
   function mapsUrl(destination,coords={}){
     const p=new URLSearchParams({api:'1',destination,travelmode:'walking',dir_action:'navigate'});
     if(Number.isFinite(coords.latitude)&&Number.isFinite(coords.longitude))p.set('origin',`${coords.latitude},${coords.longitude}`);
@@ -90,6 +106,6 @@
       catch(e){finish({error:'Location unavailable.'});}
     });
   }
-  root.AssistiveRealtime={DetectionMemory,LatestLane,describe,mapsUrl,locate};
+  root.AssistiveRealtime={DetectionMemory,LatestLane,describe,textIsImportant,mapsUrl,locate};
   if(typeof module!=='undefined')module.exports=root.AssistiveRealtime;
 })(typeof window!=='undefined'?window:globalThis);
